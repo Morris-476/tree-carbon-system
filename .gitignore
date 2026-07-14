@@ -1,0 +1,41 @@
+# 環境與密鑰
+.env
+config_local.py
+
+# Python 虛擬環境
+.venv/
+venv/
+env/
+
+# Python 快取
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 模型權重（體積大，用 Git LFS 或另行管理）
+*.pt
+*.pth
+*.onnx
+
+# 上傳暫存與辨識結果（不進版控）
+uploads/
+measured_result/
+static/img/
+
+# 執行期日誌
+*.log
+
+# 執行檔（不屬於原始碼）
+*.exe
+cloudflared*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系統檔
+.DS_Store
+Thumbs.db

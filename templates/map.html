@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block extra_css %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+    .page-title { text-align: center; padding: 25px 0; color: #1b5e20; }
+    .map-box {
+        width: 90%; max-width: 1000px; height: 580px;
+        margin: 0 auto 50px; padding: 15px;
+        background: white; border-radius: 20px;
+        border: 2px solid #ddd; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    }
+    #map { width: 100%; height: 100%; border-radius: 12px; border: 2px solid #1b5e20; z-index: 1; }
+    .leaflet-container img.leaflet-tile { max-width: none !important; max-height: none !important; padding: 0 !important; margin: 0 !important; }
+
+    /* 彈窗樣式 */
+    .tree-popup-card { width: 200px; font-family: "Microsoft JhengHei", sans-serif; }
+    .tree-popup-card img { width: 100%; border-radius: 8px; margin-bottom: 8px; border: 1px solid #eee; }
+    .tree-info-row { display: flex; justify-content: space-between; border-bottom: 1px solid #f0f0f0; padding: 4px 0; font-size: 13px; }
+    .info-label { color: #666; font-weight: bold; }
+    .info-value { color: #1b5e20; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">校園樹木分佈圖</h1>
+<div class="map-box"><div id="map"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- 由 Flask 注入地圖資料，供 map.js 讀取 -->
+<script>var TREES_DATA = {{ trees_json | safe }};</script>
+<script src="/static/js/map.js"></script>
+{% endblock %}

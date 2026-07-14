@@ -1,0 +1,10 @@
+# 合併自根目錄 requirements.txt 與 Tree-Trunk-Segmentation/requirements.txt
+# （原兩份均為空檔，依程式碼 import 補齊）
+
+Flask>=2.3
+Werkzeug>=2.3
+pyodbc>=4.0
+opencv-python>=4.8
+numpy>=1.24
+ultralytics>=8.0
+python-dotenv>=1.0

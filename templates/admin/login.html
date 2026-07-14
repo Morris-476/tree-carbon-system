@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}管理員登入 - 樹木監測系統{% endblock %}
+
+{% block extra_css %}
+<style>
+    .login-wrapper {
+        display: flex; justify-content: center; align-items: center;
+        min-height: calc(100vh - 65px); background: #f0f2f0;
+    }
+    .login-card {
+        background: white; border-radius: 16px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+        padding: 48px 40px; width: 100%; max-width: 380px;
+    }
+    .login-card h2 {
+        color: #1b5e20; text-align: center; margin-bottom: 32px; font-size: 1.5em;
+    }
+    .form-group { margin-bottom: 20px; }
+    .form-group label { display: block; color: #555; margin-bottom: 6px; font-size: 0.9em; }
+    .form-group input {
+        width: 100%; padding: 10px 14px; border: 1px solid #ddd;
+        border-radius: 8px; font-size: 1em; box-sizing: border-box;
+        transition: border-color 0.2s;
+    }
+    .form-group input:focus { outline: none; border-color: #1b5e20; }
+    .btn-login {
+        width: 100%; padding: 12px; background: #1b5e20; color: white;
+        border: none; border-radius: 8px; font-size: 1em;
+        cursor: pointer; transition: background 0.2s;
+    }
+    .btn-login:hover { background: #2e7d32; }
+    .btn-login:disabled { background: #aaa; cursor: not-allowed; }
+    .error-msg {
+        display: none; color: #c62828; background: #ffebee;
+        border-radius: 6px; padding: 10px 14px; margin-top: 16px;
+        font-size: 0.9em; text-align: center;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="login-wrapper">
+    <div class="login-card">
+        <h2>管理員登入</h2>
+        <form id="login-form" autocomplete="off">
+            <div class="form-group">
+                <label for="username">帳號</label>
+                <input type="text" id="username" name="username"
+                       placeholder="輸入管理員帳號" required autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label for="password">密碼</label>
+                <input type="password" id="password" name="password"
+                       placeholder="輸入密碼" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn-login" id="submit-btn">登入</button>
+            <div class="error-msg" id="error-msg"></div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('login-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const btn     = document.getElementById('submit-btn');
+    const errorEl = document.getElementById('error-msg');
+
+    btn.disabled    = true;
+    btn.textContent = '驗證中…';
+    errorEl.style.display = 'none';
+
+    try {
+        const res = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+            }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            window.location.href = '/admin/dashboard';
+        } else {
+            errorEl.textContent   = data.error || '登入失敗，請稍後再試。';
+            errorEl.style.display = 'block';
+        }
+    } catch (err) {
+        errorEl.textContent   = '網路錯誤，請檢查連線後重試。';
+        errorEl.style.display = 'block';
+    } finally {
+        btn.disabled    = false;
+        btn.textContent = '登入';
+    }
+});
+</script>
+{% endblock %}
