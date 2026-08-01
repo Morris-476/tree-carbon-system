@@ -1,7 +1,7 @@
 """
 services/db.py
 所有 SQL Server 查詢邏輯的唯一入口。
-資料庫正規化為五張表：Sites、Species_Ref、Trees、Measurements、Users。
+資料庫正規化為五張表：Sites、Species_Ref、Trees、Measurements、Admins。
 連線憑證一律從環境變數讀取，不寫死任何帳號密碼。
 """
 import os
@@ -138,16 +138,50 @@ def delete_tree(tree_id: int) -> bool:
 
 
 # ── 後台管理：使用者帳號 ─────────────────────────────────────────
+# 陳政雍 8/1修改
 def get_user_by_username(username: str):
-    """登入驗證用：查詢帳號，回傳 dict（含 id, username, password_hash）或 None。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    """登入驗證用：查詢帳號，回傳 dict（含 admin_id, username, password_hash）或 None。"""
+    conn = get_db_connection()
+    if conn is None:
+        return None
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT admin_id, username, password_hash FROM Admins WHERE username = ?",
+            username
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        columns = [col[0] for col in cursor.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        print(f"get_user_by_username 查詢失敗: {e}")
+        return None
+    finally:
+        conn.close()
 
 
-def create_admin_user(username: str, password_hash: str):
+# 陳政雍 8/1修改
+def create_admin_user(username: str, password_hash: str) -> bool:
     """初始化工具用：新增管理員帳號（由 scripts/create_admin.py 呼叫）。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Admins (username, password_hash) VALUES (?, ?)",
+            username, password_hash
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"create_admin_user 寫入失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 # ── CLI 工具寫入（供 Tree-Trunk-Segmentation/main.py 的桌面版呼叫）

@@ -23,12 +23,33 @@ from werkzeug.security import generate_password_hash
 from services.db import get_user_by_username, create_admin_user
 
 
+# 陳政雍 8/1修改
 def main():
-    # TODO: 待實作 — 負責人：____
-    # 互動式 CLI：提示輸入帳號（英數字）、密碼（至少 6 字元，輸入兩次確認），
-    # 以 generate_password_hash 雜湊後呼叫 create_admin_user 寫入資料庫。
-    # 帳號已存在時應提示錯誤並結束，兩次密碼不一致時也應提示錯誤。
-    raise NotImplementedError("此函式尚未實作")
+    username = input("請輸入管理員帳號（英數字）：").strip()
+    if not username or not username.isalnum():
+        print("帳號不可為空，且只能包含英數字")
+        return
+
+    if get_user_by_username(username) is not None:
+        print(f"帳號「{username}」已存在，請改用其他帳號")
+        return
+
+    password = getpass.getpass("請輸入密碼（至少 6 字元）：")
+    if len(password) < 6:
+        print("密碼長度不可少於 6 字元")
+        return
+
+    password_confirm = getpass.getpass("請再輸入一次密碼：")
+    if password != password_confirm:
+        print("兩次輸入的密碼不一致")
+        return
+
+    password_hash = generate_password_hash(password)
+
+    if create_admin_user(username, password_hash):
+        print(f"管理員帳號「{username}」建立成功")
+    else:
+        print("管理員帳號建立失敗，請檢查資料庫連線或錯誤訊息")
 
 
 if __name__ == '__main__':
