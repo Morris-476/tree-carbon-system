@@ -14,3 +14,10 @@ MODEL_PATH = os.environ.get('MODEL_PATH', 'Tree-Trunk-Segmentation/best.pt')
 # ── Flask session 密鑰 ──────────────────────────────────────────
 # 使用 secrets.token_hex(32) 產生隨機值填入 .env
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+# ── 樹幹追蹤（services/analysis/tracker.py）──────────────────────
+CONF_THRESHOLD = float(os.environ.get('CONF_THRESHOLD', '0.4'))
+TRACKER_YAML   = os.environ.get('TRACKER_YAML', 'services/analysis/bytetrack_custom.yaml')
+MIN_HITS       = int(os.environ.get('MIN_HITS', '3'))
+IMGSZ          = int(os.environ.get('IMGSZ', '640'))
+IOU            = float(os.environ.get('IOU', '0.7'))
