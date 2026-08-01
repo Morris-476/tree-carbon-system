@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}後台管理員登入{% endblock %}
+
+{% block content %}
+<div class="login-page">
+    <div class="login-box">
+        <div class="login-header">
+            <h1>後台管理員登入</h1>
+        </div>
+        <form id="login-form" class="login-form" novalidate>
+            <div class="form-row">
+                <label for="username">帳號：</label>
+                <input type="text" id="username" name="username" autocomplete="username">
+            </div>
+            <div class="form-row">
+                <label for="password">密碼：</label>
+                <input type="password" id="password" name="password" autocomplete="current-password">
+            </div>
+            <button type="submit" class="login-btn">登入</button>
+            <button type="button" class="forgot-btn">忘記密碼？</button>
+            <p id="login-error" class="login-error" hidden></p>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}" defer></script>
+{% endblock %}
