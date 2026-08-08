@@ -20,8 +20,12 @@
         <span class="nav-item">團隊介紹</span>
     </nav>
     <div class="nav-right">
-        <a href="{{ url_for('admin.login_page') }}" class="nav-link">後台登入</a>
-        <a href="#" class="nav-link">網站導覽</a>
+        {% if session.admin_id %}
+            <span class="nav-item">{{ session.username }}</span>
+            <button type="button" id="logout-btn" class="nav-link logout-btn">登出</button>
+        {% else %}
+            <a href="{{ url_for('admin.login_page') }}" class="nav-link">後台登入</a>
+        {% endif %}
     </div>
 </header>
 
@@ -29,6 +33,7 @@
 {% block content %}{% endblock %}
 </main>
 
+<script src="{{ url_for('static', filename='js/nav.js') }}" defer></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>
