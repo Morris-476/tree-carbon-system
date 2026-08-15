@@ -39,7 +39,7 @@ def _ensure_img_folder():
     raise NotImplementedError("此函式尚未實作")
 
 
-def _save_img_bin(img_bin) -> str | None:
+def _save_img_bin(img_bin) -> "str | None":
     """把二進位圖片存到 static/img/，回傳檔名（供 thumbnail_path 欄位儲存）。
     img_bin 為 None 時應回傳 None（不拋出例外）。
     """
