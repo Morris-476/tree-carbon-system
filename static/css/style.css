@@ -140,3 +140,95 @@ a {
     padding: 8px 12px;
     text-align: center;
 }
+
+/* 後台分頁列 */
+.admin-tabs {
+    display: flex;
+    gap: 20px;
+    border-bottom: 1px solid #000;
+    padding: 16px 20px;
+}
+
+.admin-tab {
+    padding: 8px 16px;
+}
+
+.admin-tab-active {
+    border: 1px solid #000;
+    background: #eee;
+}
+
+.admin-tab-disabled {
+    color: #999;
+}
+
+/* 資料上傳頁面 */
+.upload-page {
+    display: flex;
+    justify-content: center;
+    padding: 60px 20px;
+}
+
+.upload-box {
+    width: 100%;
+    max-width: 420px;
+    border: 1px solid #000;
+}
+
+.upload-header {
+    border-bottom: 1px solid #000;
+    padding: 16px;
+    text-align: center;
+}
+
+.upload-header h1 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.upload-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 30px 20px;
+}
+
+.file-pill {
+    display: block;
+    width: 100%;
+    max-width: 280px;
+    border: 1px solid #000;
+    border-radius: 20px;
+    padding: 8px 16px;
+    cursor: pointer;
+    background: #fff;
+}
+
+.file-pill-input {
+    display: none;
+}
+
+.upload-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.upload-btn {
+    border: 1px solid #000;
+    background: #000;
+    color: #fff;
+    border-radius: 20px;
+    padding: 10px 30px;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.cancel-btn {
+    border: 1px solid #000;
+    background: #fff;
+    border-radius: 20px;
+    padding: 10px 30px;
+    font-size: 1rem;
+    cursor: pointer;
+}

@@ -27,23 +27,38 @@ def login_required(f):
         if 'admin_id' not in session:
             if request.path.startswith('/api/'):
                 return jsonify({'error': '請先登入'}), 401
-            return redirect(url_for('admin.login_page'))
+            return redirect(url_for('admin.login_page', next=request.path))
         return f(*args, **kwargs)
     return decorated
+
+
+# 張恆輔 8/15新增：只允許站內相對路徑，避免 next 被用來跳轉到外部網址
+def _safe_next_path(path):
+    if path and path.startswith('/') and not path.startswith('//'):
+        return path
+    return ''
 
 
 # ── 頁面路由 ──────────────────────────────────────────────────────
 # 陳政雍 8/1修改
 @admin_bp.route('/admin/login')
 def login_page():
-    return render_template('admin/login.html')
+    next_path = _safe_next_path(request.args.get('next', ''))
+    return render_template('admin/login.html', next=next_path)
 
 
 # 陳政雍 8/1修改
+# 張恆輔 8/15修改：檢視資料表改為公開頁面，不需登入
 @admin_bp.route('/admin/dashboard')
-@login_required
 def dashboard():
     return render_template('admin/dashboard.html')
+
+
+# 張恆輔 8/15新增
+@admin_bp.route('/admin/upload')
+@login_required
+def upload_page():
+    return render_template('admin/upload.html')
 
 
 # ── API：登入 ─────────────────────────────────────────────────────
