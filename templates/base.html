@@ -14,10 +14,10 @@
         <a href="{{ url_for('pages.index') }}" class="site-title">樹木監測網站</a>
     </div>
     <nav class="nav-center">
-        <span class="nav-item">網站消息 ▾</span>
-        <span class="nav-item">校園中的樹木 ▾</span>
-        <span class="nav-item">固碳知識</span>
-        <span class="nav-item">團隊介紹</span>
+        <a href="{{ url_for('pages.index') }}" class="nav-item">首頁</a>
+        <span class="nav-item">數位地圖</span>
+        <span class="nav-item">系統管理 ▾</span>
+        <span class="nav-item">關於我們</span>
     </nav>
     <div class="nav-right">
         {% if session.admin_id %}
