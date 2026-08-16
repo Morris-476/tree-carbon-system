@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json().catch(() => ({}));
 
         if (res.ok) {
-            window.location.href = form.dataset.next || '/admin/dashboard';
+            window.location.href = form.dataset.next || '/';
         } else {
             errorEl.textContent = data.error || '登入失敗';
             errorEl.hidden = false;

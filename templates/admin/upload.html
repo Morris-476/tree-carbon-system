@@ -4,7 +4,7 @@
 {% block content %}
 <nav class="admin-tabs">
     <a href="{{ url_for('admin.dashboard') }}" class="admin-tab">檢視資料表</a>
-    <span class="admin-tab admin-tab-disabled">數據管理維護</span>
+    <a href="{{ url_for('admin.manage_page') }}" class="admin-tab">數據管理維護</a>
     <a href="{{ url_for('admin.upload_page') }}" class="admin-tab admin-tab-active">資料上傳</a>
 </nav>
 

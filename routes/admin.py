@@ -61,6 +61,13 @@ def upload_page():
     return render_template('admin/upload.html')
 
 
+# 陳政雍 8/16修改
+@admin_bp.route('/admin/manage')
+@login_required
+def manage_page():
+    return render_template('admin/manage.html')
+
+
 # ── API：登入 ─────────────────────────────────────────────────────
 # 陳政雍 8/1修改
 @admin_bp.route('/api/admin/login', methods=['POST'])
