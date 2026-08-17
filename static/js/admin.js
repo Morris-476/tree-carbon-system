@@ -96,3 +96,119 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// 張恆輔 8/17新增：數據管理維護頁（待審核資料表格 + 辨識結果圖彈窗）
+document.addEventListener('DOMContentLoaded', () => {
+    const tbody = document.getElementById('manage-tbody');
+    if (!tbody) return;
+
+    const badge = document.getElementById('pending-badge');
+    const table = document.querySelector('.manage-table');
+    const emptyEl = document.getElementById('manage-empty');
+    const modal = document.getElementById('img-modal');
+    const modalImg = document.getElementById('img-modal-img');
+    const modalPlaceholder = document.getElementById('img-modal-placeholder');
+    const modalCloseBtn = document.getElementById('img-modal-close');
+
+    // TODO: 待接 GET /api/admin/trees，目前先塞一筆假資料方便看排版，接上 API 後要拿掉
+    let trees = [
+        {
+            id: 1,
+            species: '樟樹',
+            dbh: 35.2,
+            carbon: 12.5,
+            lat: 25.1734,
+            lng: 121.4546,
+            site: '英專路',
+            img: 'measured_result/track_1_result.jpg'
+        }
+    ];
+
+    // TODO: 待接 Species_Ref 樹種清單，目前先用固定選項展示排版
+    const speciesOptions = ['樟樹', '榕樹', '茄苳', '樟樹苗'];
+
+    const renderTrees = () => {
+        tbody.innerHTML = '';
+        badge.textContent = `${trees.length} 筆待審查`;
+
+        if (trees.length === 0) {
+            table.hidden = true;
+            emptyEl.hidden = false;
+            return;
+        }
+        table.hidden = false;
+        emptyEl.hidden = true;
+
+        trees.forEach((tree) => {
+            const tr = document.createElement('tr');
+            tr.dataset.id = tree.id;
+
+            const speciesOptionsHtml = speciesOptions
+                .map((name) => `<option value="${name}"${name === tree.species ? ' selected' : ''}>${name}</option>`)
+                .join('');
+
+            tr.innerHTML = `
+                <td>${tree.id}</td>
+                <td><select class="species-select">${speciesOptionsHtml}</select></td>
+                <td>${tree.carbon}</td>
+                <td>${tree.lat}, ${tree.lng}</td>
+                <td>${tree.site}</td>
+                <td><button type="button" class="img-thumb" data-img="${tree.img || ''}" aria-label="查看辨識結果圖"></button></td>
+                <td class="manage-actions">
+                    <button type="button" class="confirm-btn" data-action="confirm">確認</button>
+                    <button type="button" class="delete-btn" data-action="delete">刪除</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    };
+
+    const closeModal = () => {
+        modal.hidden = true;
+        modalImg.hidden = true;
+        modalImg.removeAttribute('src');
+        modalPlaceholder.hidden = false;
+    };
+
+    const openModal = (imgPath) => {
+        modalPlaceholder.hidden = false;
+        modalImg.hidden = true;
+        if (imgPath) {
+            modalImg.onload = () => {
+                modalPlaceholder.hidden = true;
+                modalImg.hidden = false;
+            };
+            modalImg.onerror = () => {
+                modalImg.hidden = true;
+                modalPlaceholder.hidden = false;
+            };
+            modalImg.src = `/static/${imgPath}`;
+        }
+        modal.hidden = false;
+    };
+
+    tbody.addEventListener('click', (event) => {
+        const target = event.target;
+        const row = target.closest('tr');
+        if (!row) return;
+        const id = Number(row.dataset.id);
+
+        if (target.classList.contains('img-thumb')) {
+            openModal(target.dataset.img);
+            return;
+        }
+
+        if (target.dataset.action === 'confirm' || target.dataset.action === 'delete') {
+            // TODO: 待接 PUT /api/admin/trees/<id>（確認）與 DELETE（刪除），目前先在前端移除示範
+            trees = trees.filter((tree) => tree.id !== id);
+            renderTrees();
+        }
+    });
+
+    modalCloseBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+    });
+
+    renderTrees();
+});

@@ -16,7 +16,8 @@
     <nav class="nav-center">
         <a href="{{ url_for('pages.index') }}" class="nav-item">首頁</a>
         <span class="nav-item">數位地圖</span>
-        <span class="nav-item">系統管理 ▾</span>
+        {# 張恆輔 8/17修改：系統管理改為連結，導向檢視資料表頁面 #}
+        <a href="{{ url_for('admin.dashboard') }}" class="nav-item">系統管理 ▾</a>
         <span class="nav-item">關於我們</span>
     </nav>
     <div class="nav-right">
