@@ -90,6 +90,36 @@ def get_tree_map_data():
     finally:
         conn.close()
 
+# 負責人：陳信睿 8/18 首頁排版
+# ── 首頁統計查詢（僅 confirmed）──────────────────────────────────
+def get_stats():
+    """回傳全站統計數字，供首頁使用。
+    回傳 dict：{'total_trees': ..., 'total_carbon': ...}。
+    連線失敗或查詢例外時回傳 {'total_trees': 0, 'total_carbon': 0}。
+    """
+    conn = get_db_connection()
+    if conn is None:
+        return {'total_trees': 0, 'total_carbon': 0}
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) AS total_trees, SUM(carbon) AS total_carbon
+            FROM Measurements
+            WHERE status = 'confirmed'
+        """)
+        columns = [col[0] for col in cursor.description]
+        row = cursor.fetchone()
+        result = dict(zip(columns, row))
+        return {
+            'total_trees': result.get('total_trees') or 0,
+            'total_carbon': result.get('total_carbon') or 0
+        }
+    except Exception as e:
+        print(f"get_stats 查詢失敗: {e}")
+        return {'total_trees': 0, 'total_carbon': 0}
+    finally:
+        conn.close()
+
 
 # ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
 def get_tree_list():
