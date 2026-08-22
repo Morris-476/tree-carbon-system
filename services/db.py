@@ -116,6 +116,52 @@ def save_pipeline_record(species, dbh, carbon, lat, lon,
     raise NotImplementedError("此函式尚未實作")
 
 
+# ── 時間對齊管線寫入（Arduino/RTK 對齊後的原始感測器資料）────────
+# 負責人：蔡宗倫
+# 開發日期：2026/08/22
+def save_sensor_sync_records(records: list) -> dict:
+    """寫入時間對齊後的原始感測器資料（Sensor_Sync_Records）。
+    此表僅存放 merge_data.py 對齊完的中繼資料，供之後影像追蹤（tracker）與
+    樹徑計算完成後，配合 track_id 寫入正式的 Trees / Measurements。
+    records 為 list of dict，欄位需對應 sql/create_tables.sql 中 Sensor_Sync_Records 的定義。
+    """
+    if not records:
+        return {'status': 'success', 'inserted': 0}
+
+    conn = get_db_connection()
+    if conn is None:
+        return {'status': 'error', 'message': '資料庫連線失敗'}
+    try:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO Sensor_Sync_Records (
+                merge_batch_id, arduino_tree_id, recorded_at,
+                latitude, longitude, rtk_height_m, rtk_speed_mps, rtk_heading_deg, rtk_tag,
+                laser_status, led_status, tof_dist1_cm, tof_dist2_cm,
+                rtk_gap_ms, video_offset_ms, video_filename
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r['merge_batch_id'], r['arduino_tree_id'], r['recorded_at'],
+                    r['latitude'], r['longitude'], r['rtk_height_m'], r['rtk_speed_mps'],
+                    r['rtk_heading_deg'], r['rtk_tag'],
+                    r['laser_status'], r['led_status'], r['tof_dist1_cm'], r['tof_dist2_cm'],
+                    r['rtk_gap_ms'], r['video_offset_ms'], r['video_filename'],
+                )
+                for r in records
+            ]
+        )
+        conn.commit()
+        return {'status': 'success', 'inserted': len(records)}
+    except Exception as e:
+        conn.rollback()
+        return {'status': 'error', 'message': f'寫入 Sensor_Sync_Records 失敗：{str(e)}'}
+    finally:
+        conn.close()
+
+
 # ── 後台管理：樹木清單（含所有 status）──────────────────────────
 def get_all_trees_admin():
     """後台用：回傳含 status 的完整清單（pending + confirmed）。

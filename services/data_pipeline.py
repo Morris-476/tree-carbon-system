@@ -15,20 +15,55 @@ services/data_pipeline.py
 ⚠️  k_value（cm/pixel）計算依賴相機焦距與感測器距離的對應關係，
     此常數需用真實硬體標定（用已知直徑物體在已知距離拍照量測）。
     取得真實硬體後，標定結果須替換此處的計算邏輯。
+
+⚠️  2026/08/22 修改：原本模組頂層 import 的 services.rtk_parser / services.csv_parser /
+    services.tracker / services.diameter_calc 這幾個檔案在專案中都還不存在（不是路徑打錯，
+    是 CONTRIBUTING.md 架構文件裡規劃要有、但尚未有人實作），會讓整個模組一 import 就
+    ImportError。時間對齊功能（run_sensor_time_sync）不需要這幾個模組，因此先把它們
+    從頂層 import 移除；②③以外的步驟（④～⑦影像追蹤與樹徑計算）仍待負責人補上對應檔案，
+    屆時請在 process_upload() 內補回對應 import。
 """
 from __future__ import annotations
 
 import os
-import cv2
+from datetime import datetime
 from typing import Optional
 
-from services.rtk_parser import parse_rtk_file
-from services.csv_parser import parse_tof_csv
-from services.time_sync import align_measurements, TimeSyncError
-from services.tracker import TreeTracker
-from services.diameter_calc import TreeCalculator
+from services import merge_data
 from services import db as db_service
 import config
+
+
+def run_sensor_time_sync(
+    rtk_file_path: str,
+    csv_file_path: str,
+    video_path: Optional[str] = None,
+    video_start_at: Optional[datetime] = None,
+    max_rtk_gap_seconds: int = 3,
+) -> dict:
+    """
+    資料處理管線的第①～③步：解析 Arduino(ToF) 與 RTK 檔案、對齊時間戳記，
+    寫入 Sensor_Sync_Records 暫存表。是 process_upload() 未來會呼叫的其中一段，
+    目前先獨立提供，讓時間對齊功能不需等 tracker / diameter_calc 完成就能先運作。
+
+    Args:
+        rtk_file_path:        RTK CSV 路徑
+        csv_file_path:        Arduino(ToF) CSV 路徑
+        video_path:            影片路徑，僅用於記錄檔名（可為 None）
+        video_start_at:        影片第 0 影格的真實時間；未提供時由 merge_data 自動
+                               取 Arduino 最早時間戳記（詳見 services/merge_data.py 說明）
+        max_rtk_gap_seconds:   RTK 與 Arduino 紀錄的最大容忍時間差（秒）
+
+    Returns:
+        dict，同 services.merge_data.merge_and_store_sensor_data() 的回傳格式
+    """
+    return merge_data.merge_and_store_sensor_data(
+        arduino_path=csv_file_path,
+        rtk_path=rtk_file_path,
+        video_filename=video_path,
+        video_start_at=video_start_at,
+        max_gap_seconds=max_rtk_gap_seconds,
+    )
 
 
 def process_upload(
