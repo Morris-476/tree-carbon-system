@@ -1,3 +1,4 @@
+/* 負責人：陳信睿 8/18 首頁排版 */
 * {
     box-sizing: border-box;
 }
@@ -16,6 +17,8 @@ a {
 
 /* 導覽列 */
 .navbar {
+    position: relative;
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -25,14 +28,14 @@ a {
 }
 
 .site-title {
-    font-size: 1.2rem;
+    font-size: 40px;
     font-weight: bold;
     white-space: nowrap;
 }
 
 .nav-center {
     display: flex;
-    gap: 24px;
+    gap: 48px;
 }
 
 .nav-item {
@@ -49,6 +52,45 @@ a {
 
 .nav-link {
     text-decoration: underline;
+}
+
+.nav-dropdown {
+    position: relative;
+}
+
+.nav-dropdown-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.nav-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 1001;
+    min-width: 160px;
+    border: 1px solid #000;
+    background: #fff;
+}
+
+.nav-dropdown-menu:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+}
+
+.nav-dropdown-menu a {
+    padding: 8px 16px;
+    white-space: nowrap;
+}
+
+.nav-dropdown-menu a:hover {
+    background: #eee;
 }
 
 /* 陳信睿 8/7新增 */
@@ -120,16 +162,6 @@ a {
     padding: 10px 40px;
     font-size: 1rem;
     cursor: pointer;
-}
-
-.forgot-btn {
-    border: none;
-    background: none;
-    text-decoration: underline;
-    cursor: pointer;
-    padding: 0;
-    font-size: 0.85rem;
-    font-family: inherit;
 }
 
 .login-error {
@@ -231,4 +263,79 @@ a {
     padding: 10px 30px;
     font-size: 1rem;
     cursor: pointer;
+}
+
+/* 首頁 */
+.banner-notice {
+    float: right;
+    margin: 0;
+    border: 1px solid #000;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+}
+
+.hero-section {
+    clear: both;
+    padding: 60px 20px 40px;
+    text-align: center;
+    background-color: #d9d9d9;
+}
+
+.hero-title {
+    margin: 0 0 12px;
+    font-size: 2rem;
+}
+
+.hero-subtitle {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #333;
+}
+
+.stats-section {
+    padding: 20px 20px 60px;
+    text-align: center;
+}
+
+.stats-heading {
+    margin: 0 0 30px;
+    font-size: 1.3rem;
+}
+
+.stats-circles {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 40px;
+}
+
+.stat-circle {
+    display: flex;
+    width: 200px;
+    height: 200px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid #000;
+    border-radius: 50%;
+    padding: 20px;
+    text-align: center;
+}
+
+.stat-label {
+    font-size: 0.95rem;
+}
+
+.stat-value {
+    font-size: 1.6rem;
+    font-weight: bold;
+}
+
+/* 頁尾 */
+.site-footer {
+    border-top: 1px solid #000;
+    padding: 16px 20px;
+    text-align: center;
+    font-size: 0.9rem;
 }
