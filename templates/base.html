@@ -15,9 +15,14 @@
     </div>
     <nav class="nav-center">
         <a href="{{ url_for('pages.index') }}" class="nav-item">首頁</a>
-        <span class="nav-item">數位地圖</span>
-        {# 張恆輔 8/17修改：系統管理改為連結，導向檢視資料表頁面 #}
-        <a href="{{ url_for('admin.dashboard') }}" class="nav-item">系統管理 ▾</a>
+        <a href="{{ url_for('pages.map_page') }}" class="nav-item">數位地圖</a>
+        <div class="nav-item nav-dropdown">
+            <button type="button" class="nav-dropdown-toggle">系統管理 ▾</button>
+            <div class="nav-dropdown-menu" hidden>
+                <a href="{{ url_for('admin.dashboard') }}">檢視資料表</a>
+                <a href="{{ url_for('admin.manage_page') }}">數據管理與維護</a>
+            </div>
+        </div>
         <span class="nav-item">關於我們</span>
     </nav>
     <div class="nav-right">
@@ -33,6 +38,10 @@
 <main>
 {% block content %}{% endblock %}
 </main>
+
+<footer class="site-footer">
+    <p>@ 2026 淡江大學樹木碳匯監測系統</p>
+</footer>
 
 <script src="{{ url_for('static', filename='js/nav.js') }}" defer></script>
 {% block extra_scripts %}{% endblock %}

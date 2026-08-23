@@ -53,10 +53,10 @@ def _get_or_create_species(cursor, species_name: str) -> int:
     raise NotImplementedError("此函式尚未實作")
 
 
-# ── 地圖頁查詢（僅 confirmed）────────────────────────────────────
+# ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
     """回傳 (tree_list, db_status)，供 routes/pages.py 的地圖頁使用。
-    tree_list 中每筆需含 id, species, dbh, carbon, lat, lng, time, img 欄位。
+    tree_list 中每筆需含 species_name, carbon_absorpation, latitude, longitude 欄位。
     db_status 為 "connected" 或 "disconnected"。
     """
     conn = get_db_connection()
@@ -66,19 +66,11 @@ def get_tree_map_data():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT
-                m.id,
-                sr.name        AS species,
-                m.dbh,
-                m.carbon,
-                t.latitude     AS lat,
-                t.longitude    AS lng,
-                m.recorded_at  AS time,
-                m.thumbnail_path AS img
-            FROM Measurements m
-            INNER JOIN Trees       t  ON m.tree_id    = t.id
-            INNER JOIN Species_Ref sr ON t.species_id = sr.id
-            LEFT  JOIN Sites       si ON t.site_id    = si.id
-            WHERE m.status = 'confirmed'
+                species_name,
+                carbon_absorpation,
+                latitude,
+                longitude
+            FROM v_TreeCompleteData
         """)
         columns = [col[0] for col in cursor.description]
         rows = cursor.fetchall()
@@ -87,6 +79,36 @@ def get_tree_map_data():
     except Exception as e:
         print(f"get_tree_map_data 查詢失敗: {e}")
         return [], "disconnected"
+    finally:
+        conn.close()
+
+# 負責人：陳信睿 8/18 首頁排版
+# ── 首頁統計查詢（僅 confirmed）──────────────────────────────────
+def get_stats():
+    """回傳全站統計數字，供首頁使用。
+    回傳 dict：{'total_trees': ..., 'total_carbon': ...}。
+    連線失敗或查詢例外時回傳 {'total_trees': 0, 'total_carbon': 0}。
+    """
+    conn = get_db_connection()
+    if conn is None:
+        return {'total_trees': 0, 'total_carbon': 0}
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) AS total_trees, SUM(carbon) AS total_carbon
+            FROM Measurements
+            WHERE status = 'confirmed'
+        """)
+        columns = [col[0] for col in cursor.description]
+        row = cursor.fetchone()
+        result = dict(zip(columns, row))
+        return {
+            'total_trees': result.get('total_trees') or 0,
+            'total_carbon': result.get('total_carbon') or 0
+        }
+    except Exception as e:
+        print(f"get_stats 查詢失敗: {e}")
+        return {'total_trees': 0, 'total_carbon': 0}
     finally:
         conn.close()
 
