@@ -339,3 +339,13 @@ a {
     text-align: center;
     font-size: 0.9rem;
 }
+
+/* 數位地圖圖釘 */
+.tree-pin-body {
+    width: 20px;
+    height: 20px;
+    border-radius: 50% 50% 50% 0;
+    background: #c0392b;
+    border: 1px solid #000;
+    transform: rotate(-45deg);
+}
