@@ -3,8 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const mapEl = document.getElementById('treeMap');
     if (!mapEl) return;
 
-    const errorEl = document.getElementById('mapError');
-
     // 淡江大學校園座標
     const map = L.map('treeMap').setView([25.1745, 121.4502], 17);
 
@@ -12,9 +10,16 @@ document.addEventListener('DOMContentLoaded', () => {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
+    const pinIcon = L.divIcon({
+        className: 'tree-pin',
+        html: '<div class="tree-pin-body"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 24],
+        popupAnchor: [0, -24]
+    });
+
     const showError = (message) => {
-        errorEl.textContent = message;
-        errorEl.hidden = false;
+        console.error(message);
     };
 
     const loadTrees = async () => {
@@ -36,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
         (data.trees || []).forEach((tree) => {
             if (tree.lat == null || tree.lng == null) return;
 
-            const marker = L.marker([tree.lat, tree.lng]).addTo(map);
+            const marker = L.marker([tree.lat, tree.lng], { icon: pinIcon }).addTo(map);
             const popupEl = document.createElement('div');
 
             const speciesLine = document.createElement('p');
