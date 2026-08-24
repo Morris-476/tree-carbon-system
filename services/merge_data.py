@@ -1,15 +1,12 @@
 # 負責人：蔡宗倫
 # 開發日期：2026/08/16
-# 2026/08/22 修改：改為對齊 Arduino(ToF) / RTK / 影片三者時間，直接寫入資料庫（不再輸出 CSV）
-# 用意：對齊 Arduino(ToF) 與 RTK 的 CSV 數據，並推算影片起始時間，合併後寫入 Sensor_Sync_Records
+# 2026/08/24 修改：改為純運算邏輯（不寫入資料庫、不輸出檔案），供 /api/upload 上傳流程呼叫
+# 用意：對齊 Arduino(ToF) 與 RTK 的 CSV 數據，並推算影片起始時間，回傳合併後的資料
 
 import os
-import uuid
 from datetime import datetime
 
 import pandas as pd
-
-from services import db as db_service
 
 
 class MergeDataError(Exception):
@@ -68,7 +65,7 @@ def _read_rtk_csv(rtk_path: str) -> pd.DataFrame:
     return df.drop(columns=['INDEX', 'DATE', 'TIME', 'LATITUDE N/S', 'LONGITUDE E/W'])
 
 
-def merge_and_store_sensor_data(
+def align_sensor_data(
     arduino_path: str,
     rtk_path: str,
     video_filename: str | None = None,
@@ -76,8 +73,8 @@ def merge_and_store_sensor_data(
     max_gap_seconds: int = 3,
 ) -> dict:
     """
-    對齊 Arduino(ToF) 與 RTK 的時間戳記並合併，推算影片起始時間後，直接寫入資料庫的
-    Sensor_Sync_Records 暫存表（不輸出 CSV 檔）。
+    對齊 Arduino(ToF) 與 RTK 的時間戳記並合併，推算影片起始時間，回傳合併後的資料。
+    純運算邏輯，不寫入資料庫、不輸出檔案。
 
     對齊邏輯：
       - 以 Arduino(ToF) 的紀錄為主軸（逐秒連續紀錄），用 merge_asof 抓最接近時間的 RTK 紀錄
@@ -91,12 +88,16 @@ def merge_and_store_sensor_data(
     Args:
         arduino_path:     Arduino(ToF) CSV 路徑，例如 TREE_015.CSV
         rtk_path:          RTK CSV 路徑，例如 01182401.CSV
-        video_filename:    對應的影片檔名，供追蹤紀錄使用（可為 None）
+        video_filename:    對應的影片檔名，供辨識結果標記使用（可為 None）
         video_start_at:    影片第 0 影格的真實時間；未提供時自動取 Arduino 最早時間戳記
         max_gap_seconds:   RTK 與 Arduino 紀錄的最大容忍時間差（秒），預設 3 秒
 
     Returns:
-        dict，含 status、inserted（成功寫入筆數）、merge_batch_id、message（失敗時）
+        dict，成功時含：
+          status='success', message, records（對齊後每筆資料的 list of dict），
+          total_count, matched_gps_count（成功配對到 GPS 座標的筆數）,
+          video_start_at, video_filename
+        失敗時含：status='error', message
     """
     try:
         if not os.path.exists(arduino_path):
@@ -122,13 +123,11 @@ def merge_and_store_sensor_data(
         merged['rtk_gap_ms'] = (merged['recorded_at'] - merged['rtk_recorded_at']).dt.total_seconds().abs() * 1000
         merged['video_offset_ms'] = (merged['recorded_at'] - video_start_at).dt.total_seconds() * 1000
 
-        merge_batch_id = str(uuid.uuid4())
         video_name = os.path.basename(video_filename) if video_filename else None
 
         records = []
         for _, row in merged.iterrows():
             records.append({
-                'merge_batch_id': merge_batch_id,
                 'arduino_tree_id': int(row['Tree_ID']),
                 'recorded_at': row['recorded_at'].to_pydatetime(),
                 'latitude': None if pd.isna(row['latitude']) else float(row['latitude']),
@@ -143,21 +142,16 @@ def merge_and_store_sensor_data(
                 'tof_dist2_cm': float(row['ToF_Dist2_cm']),
                 'rtk_gap_ms': None if pd.isna(row['rtk_gap_ms']) else int(row['rtk_gap_ms']),
                 'video_offset_ms': int(row['video_offset_ms']),
-                'video_filename': video_name,
             })
-
-        result = db_service.save_sensor_sync_records(records)
-        if result.get('status') != 'success':
-            raise MergeDataError(result.get('message', '寫入資料庫失敗'))
 
         return {
             'status': 'success',
-            'message': '時間對齊完成，已寫入資料庫',
-            'merge_batch_id': merge_batch_id,
-            'inserted': result['inserted'],
-            'matched_gps_count': int(merged['latitude'].notna().sum()),
+            'message': '時間對齊完成',
+            'records': records,
             'total_count': len(records),
+            'matched_gps_count': int(merged['latitude'].notna().sum()),
             'video_start_at': video_start_at,
+            'video_filename': video_name,
         }
 
     except MergeDataError as e:
@@ -172,8 +166,8 @@ if __name__ == '__main__':
     test_arduino = 'data/raw/TREE_015.CSV'
     test_rtk = 'data/raw/01182401.CSV'
 
-    result = merge_and_store_sensor_data(test_arduino, test_rtk, video_filename='IMG_4631.MOV')
+    result = align_sensor_data(test_arduino, test_rtk, video_filename='IMG_4631.MOV')
     if result['status'] == 'success':
-        print(f"成功：{result['message']}，共寫入 {result['inserted']} 筆（其中 {result['matched_gps_count']} 筆有 GPS 座標）")
+        print(f"成功：{result['message']}，共 {result['total_count']} 筆（其中 {result['matched_gps_count']} 筆有 GPS 座標）")
     else:
         print(f"失敗：{result['message']}")

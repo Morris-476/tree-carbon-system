@@ -22,15 +22,16 @@ services/data_pipeline.py
     ImportError。時間對齊功能（run_sensor_time_sync）不需要這幾個模組，因此先把它們
     從頂層 import 移除；②③以外的步驟（④～⑦影像追蹤與樹徑計算）仍待負責人補上對應檔案，
     屆時請在 process_upload() 內補回對應 import。
+
+⚠️  2026/08/24 修改：run_sensor_time_sync 改呼叫純運算版本 merge_data.align_sensor_data()，
+    不再寫入資料庫，供 /api/upload 上傳流程直接呼叫並回傳對齊結果。
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Optional
 
 from services import merge_data
-from services import db as db_service
 import config
 
 
@@ -42,8 +43,8 @@ def run_sensor_time_sync(
     max_rtk_gap_seconds: int = 3,
 ) -> dict:
     """
-    資料處理管線的第①～③步：解析 Arduino(ToF) 與 RTK 檔案、對齊時間戳記，
-    寫入 Sensor_Sync_Records 暫存表。是 process_upload() 未來會呼叫的其中一段，
+    資料處理管線的第①～③步：解析 Arduino(ToF) 與 RTK 檔案、對齊時間戳記，回傳合併結果。
+    純運算邏輯，不寫入資料庫。是 process_upload() 未來會呼叫的其中一段，
     目前先獨立提供，讓時間對齊功能不需等 tracker / diameter_calc 完成就能先運作。
 
     Args:
@@ -55,9 +56,9 @@ def run_sensor_time_sync(
         max_rtk_gap_seconds:   RTK 與 Arduino 紀錄的最大容忍時間差（秒）
 
     Returns:
-        dict，同 services.merge_data.merge_and_store_sensor_data() 的回傳格式
+        dict，同 services.merge_data.align_sensor_data() 的回傳格式
     """
-    return merge_data.merge_and_store_sensor_data(
+    return merge_data.align_sensor_data(
         arduino_path=csv_file_path,
         rtk_path=rtk_file_path,
         video_filename=video_path,
