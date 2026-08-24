@@ -1,0 +1,16 @@
+<!-- 陳政雍 8/18新增MAP功能 -->
+{% extends "base.html" %}
+{% block title %}數位地圖{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
+
+{% block content %}
+<div id="treeMap" style="height: calc(100vh - 160px); width: 100%;"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='js/map.js') }}" defer></script>
+{% endblock %}
