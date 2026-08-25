@@ -4,9 +4,9 @@ services/db.py
 資料庫正規化為五張表：Sites、Species_Ref、Trees、Measurements、Admins。
 連線憑證一律從環境變數讀取，不寫死任何帳號密碼。
 """
+import base64
 import os
 import uuid
-import base64
 import pyodbc
 import config
 
@@ -34,18 +34,28 @@ def get_db_connection():
         return None
 
 
-def _ensure_img_folder():
-    """確保 static/img/ 資料夾存在，回傳資料夾路徑。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+def _img_bin_to_data_uri(img_bin) -> "str | None":
+    """把資料庫 image_data（VARBINARY）讀出的二進位內容轉成前端可直接用的
+    data URI（data:image/...;base64,...），供 <img src> 直接顯示。
+    img_bin 為 None 時回傳 None（不拋出例外）。
 
-
-def _save_img_bin(img_bin) -> "str | None":
-    """把二進位圖片存到 static/img/，回傳檔名（供 thumbnail_path 欄位儲存）。
-    img_bin 為 None 時應回傳 None（不拋出例外）。
+    圖片一律直接以二進位存入資料庫的 image_data 欄位，不寫檔到 static/img/。
+    寫入時同理：INSERT/UPDATE 直接把 bytes 帶入 image_data 參數即可，
+    pyodbc 會自動對應到 VARBINARY(MAX)，不需要額外轉換。
     """
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    if img_bin is None:
+        return None
+    img_bytes = bytes(img_bin)
+    if img_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+        mime = 'image/png'
+    elif img_bytes.startswith(b'\xff\xd8\xff'):
+        mime = 'image/jpeg'
+    elif img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+        mime = 'image/gif'
+    else:
+        mime = 'image/jpeg'
+    b64 = base64.b64encode(img_bytes).decode('ascii')
+    return f'data:{mime};base64,{b64}'
 
 
 def _get_or_create_species(cursor, species_name: str) -> int:
@@ -57,7 +67,8 @@ def _get_or_create_species(cursor, species_name: str) -> int:
 # ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
     """回傳 (tree_list, db_status)，供 routes/pages.py 的地圖頁使用。
-    tree_list 中每筆需含 species_name, carbon_absorpation, latitude, longitude 欄位。
+    tree_list 中每筆需含 species_name, carbon_absorpation, latitude, longitude, img 欄位。
+    img 為 data URI 字串（由 image_data 二進位欄位轉換而來），無圖片時為 None。
     db_status 為 "connected" 或 "disconnected"。
     """
     conn = get_db_connection()
@@ -70,12 +81,15 @@ def get_tree_map_data():
                 species_name,
                 carbon_absorpation,
                 latitude,
-                longitude
+                longitude,
+                image_data
             FROM v_TreeCompleteData
         """)
         columns = [col[0] for col in cursor.description]
         rows = cursor.fetchall()
         tree_list = [dict(zip(columns, row)) for row in rows]
+        for tree in tree_list:
+            tree['img'] = _img_bin_to_data_uri(tree.pop('image_data', None))
         return tree_list, "connected"
     except Exception as e:
         print(f"get_tree_map_data 查詢失敗: {e}")
@@ -118,6 +132,7 @@ def get_stats():
 def get_tree_list():
     """回傳樹木清單，供 routes/pages.py 的資料展示頁使用。
     每筆需含 id, species, dbh, carbon, recorded_at, img_url 欄位。
+    img_url 請用 _img_bin_to_data_uri() 把 SELECT 出來的 image_data 轉成 data URI。
     """
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
@@ -125,7 +140,10 @@ def get_tree_list():
 
 # ── 網頁上傳寫入（status='confirmed'，直接公開）──────────────────
 def save_tree_record(species, dbh, carbon, img_bin):
-    """儲存網頁上傳的辨識結果（無 GPS 座標）。"""
+    """儲存網頁上傳的辨識結果（無 GPS 座標）。
+    img_bin 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
+    （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
+    """
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
 
@@ -139,7 +157,7 @@ def save_pipeline_record(species, dbh, carbon, lat, lon,
     raise NotImplementedError("此函式尚未實作")
 
 
-# 張恆輔 8/25新增：數據管理維護頁串接資料庫（座標/圖片轉換 + 待審核清單查詢）
+# 張恆輔 8/25新增：'25.0883747N' 這種字串轉成帶正負號的十進位度數，S/W 為負
 def _parse_coord(raw):
     if not raw:
         return None
@@ -152,21 +170,6 @@ def _parse_coord(raw):
     except ValueError:
         return None
     return -value if direction in ('S', 'W') else value
-
-
-# 從二進位開頭判斷圖片格式，組成可直接放進 <img src> 的 data URI
-def _to_img_data_uri(image_bin):
-    if not image_bin:
-        return None
-    data = bytes(image_bin)
-    if data.startswith(b'\xff\xd8\xff'):
-        mime = 'image/jpeg'
-    elif data.startswith(b'\x89PNG\r\n\x1a\n'):
-        mime = 'image/png'
-    else:
-        mime = 'application/octet-stream'
-    encoded = base64.b64encode(data).decode('ascii')
-    return f'data:{mime};base64,{encoded}'
 
 
 # ── 後台管理：樹木清單（僅 pending）───────────────────────────────
@@ -218,7 +221,7 @@ def get_all_trees_admin():
                 'site': row['site'],
                 'status': 'pending',
                 'recorded_at': recorded_at or None,
-                'img': _to_img_data_uri(row['image_bin']),
+                'img': _img_bin_to_data_uri(row['image_bin']),
             })
         return trees
     except Exception as e:
@@ -289,6 +292,9 @@ def create_admin_user(username: str, password_hash: str) -> bool:
 
 # ── CLI 工具寫入（供 Tree-Trunk-Segmentation/main.py 的桌面版呼叫）
 def insert_record_with_location(species, dbh, carbon, lat, lon, thumbnail_data=None):
-    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄（status='confirmed'）。"""
+    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄（status='confirmed'）。
+    thumbnail_data 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
+    （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
+    """
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
