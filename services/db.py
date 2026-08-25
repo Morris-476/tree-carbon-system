@@ -157,18 +157,78 @@ def save_pipeline_record(species, dbh, carbon, lat, lon,
     raise NotImplementedError("此函式尚未實作")
 
 
-# ── 後台管理：樹木清單（含所有 status）──────────────────────────
-def get_all_trees_admin():
-    """後台用：回傳含 status 的完整清單（pending + confirmed）。
-    每筆需含 id, species, dbh, carbon, lat, lng, recorded_at, img_url, status 欄位。
+# 張恆輔 8/25新增：'25.0883747N' 這種字串轉成帶正負號的十進位度數，S/W 為負
+def _parse_coord(raw):
+    if not raw:
+        return None
+    raw = raw.strip()
+    direction = raw[-1].upper()
+    if direction not in ('N', 'S', 'E', 'W'):
+        return None
+    try:
+        value = float(raw[:-1])
+    except ValueError:
+        return None
+    return -value if direction in ('S', 'W') else value
 
-    注意：pending 資料若查 dbo.v_AdminPendingQueue，該 view 的二進位照片欄位
-    叫 [樹木照片二進位]（不是 image_data，這個名字只有 v_TreeCompleteData 有），
-    一樣用 _img_bin_to_data_uri() 轉成 img_url。另外該 view 沒有 lat/lng 和
-    status 欄位，這兩者要另外查 Trees / Measurements 補上。
+
+# ── 後台管理：樹木清單（僅 pending）───────────────────────────────
+# 直接查 Measurements/Trees/Sites/Species_Ref，不透過 v_AdminPendingQueue
+# —— 該 view 內部用 INNER JOIN，Trees.site_id／species_id 為 NULL 時
+# 會把整筆濾掉，用 LEFT JOIN 才不會受影響。
+def get_all_trees_admin():
+    """後台用：回傳待審核清單（Measurements.status = 'pending'，不分大小寫）。
+    每筆含 id, species, dbh, carbon, lat, lng, site, status, recorded_at, img 欄位。
     """
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    conn = get_db_connection()
+    if conn is None:
+        return []
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                m.record_id           AS id,
+                sp.species_name        AS species,
+                m.dbh                   AS dbh,
+                m.carbon_absorpation    AS carbon,
+                s.site_name              AS site,
+                m.[DATE]                 AS measure_date,
+                m.[TIME]                  AS measure_time,
+                t.[LATITUDE N/S]           AS lat_raw,
+                t.[LONGITUDE E/W]           AS lng_raw,
+                m.image_data                 AS image_bin
+            FROM Measurements m
+            LEFT JOIN Trees t       ON t.Tree_ID = m.Tree_ID
+            LEFT JOIN Sites s       ON s.site_id = t.site_id
+            LEFT JOIN Species_Ref sp ON sp.species_id = t.species_id
+            WHERE LOWER(m.status) = 'pending'
+        """)
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        trees = []
+        for row in rows:
+            recorded_at = ' '.join(
+                part for part in (row['measure_date'], row['measure_time']) if part
+            )
+            trees.append({
+                'id': row['id'],
+                'species': row['species'],
+                'dbh': float(row['dbh']) if row['dbh'] is not None else None,
+                'carbon': float(row['carbon']) if row['carbon'] is not None else None,
+                'lat': _parse_coord(row['lat_raw']),
+                'lng': _parse_coord(row['lng_raw']),
+                'site': row['site'],
+                'status': 'pending',
+                'recorded_at': recorded_at or None,
+                'img': _img_bin_to_data_uri(row['image_bin']),
+            })
+        return trees
+    except Exception as e:
+        print(f"get_all_trees_admin 查詢失敗: {e}")
+        return []
+    finally:
+        conn.close()
 
 
 def update_tree_status(tree_id: int, new_status: str) -> bool:

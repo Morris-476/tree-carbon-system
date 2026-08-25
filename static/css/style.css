@@ -174,20 +174,27 @@ a {
 }
 
 /* 後台分頁列 */
+/* 張恆輔 8/25修改：分頁改為各自獨立外框，選中項目粗框+深底，排版比照線框圖 */
 .admin-tabs {
     display: flex;
-    gap: 20px;
+    gap: 12px;
     border-bottom: 1px solid #000;
     padding: 16px 20px;
 }
 
 .admin-tab {
+    border: 1px solid #000;
+    background: #fff;
     padding: 8px 16px;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: normal;
+    color: #000;
 }
 
 .admin-tab-active {
-    border: 1px solid #000;
-    background: #eee;
+    border: 2px solid #000;
+    background: #ccc;
 }
 
 .admin-tab-disabled {
@@ -261,6 +268,147 @@ a {
     background: #fff;
     border-radius: 20px;
     padding: 10px 30px;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+/* 數據管理維護頁面 */
+/* 張恆輔 8/25新增：待審核資料表格、樹種下拉選單、確認／刪除按鈕樣式 */
+.manage-page {
+    padding: 24px 20px;
+}
+
+.manage-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.manage-header h1 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.pending-badge {
+    border: 1px solid #000;
+    padding: 4px 12px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.manage-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-top: 1px solid #000;
+    border-left: 1px solid #000;
+}
+
+.manage-table th,
+.manage-table td {
+    border-right: 1px solid #000;
+    border-bottom: 1px solid #000;
+    padding: 10px 12px;
+    text-align: center;
+    font-size: 0.95rem;
+}
+
+.species-select {
+    border: 1px solid #000;
+    background: #fff;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 0.95rem;
+}
+
+.img-thumb {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #000;
+    background: #ddd;
+    padding: 0;
+    cursor: pointer;
+}
+
+.manage-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.confirm-btn,
+.delete-btn {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid #000;
+    background: #fff;
+    padding: 6px 14px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.manage-empty {
+    text-align: center;
+    color: #999;
+    padding: 30px 0;
+}
+
+/* 辨識結果圖彈窗 */
+/* 張恆輔 8/25新增：點「圖」欄縮圖彈出的辨識結果圖彈窗 */
+.img-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.img-modal[hidden] {
+    display: none;
+}
+
+.img-modal-box {
+    width: 100%;
+    max-width: 360px;
+    border: 1px solid #000;
+    background: #fff;
+}
+
+.img-modal-header {
+    border-bottom: 1px solid #000;
+    padding: 14px;
+    text-align: center;
+    font-weight: bold;
+}
+
+.img-modal-body {
+    padding: 20px;
+}
+
+.img-modal-placeholder,
+.img-modal-img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #ddd;
+    object-fit: cover;
+}
+
+.img-modal-placeholder[hidden],
+.img-modal-img[hidden] {
+    display: none;
+}
+
+.img-modal-close {
+    display: block;
+    margin: 0 auto 20px;
+    border: 1px solid #000;
+    background: #fff;
+    padding: 8px 30px;
+    font-family: inherit;
     font-size: 1rem;
     cursor: pointer;
 }
