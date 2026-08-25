@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// 張恆輔 8/17新增：數據管理維護頁（待審核資料表格 + 辨識結果圖彈窗）
+// 張恆輔 8/25新增：數據管理維護頁（待審核資料表格 + 辨識結果圖彈窗）
 document.addEventListener('DOMContentLoaded', () => {
     const tbody = document.getElementById('manage-tbody');
     if (!tbody) return;
@@ -110,22 +110,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalPlaceholder = document.getElementById('img-modal-placeholder');
     const modalCloseBtn = document.getElementById('img-modal-close');
 
-    // TODO: 待接 GET /api/admin/trees，目前先塞一筆假資料方便看排版，接上 API 後要拿掉
-    let trees = [
-        {
-            id: 1,
-            species: '樟樹',
-            dbh: 35.2,
-            carbon: 12.5,
-            lat: 25.1734,
-            lng: 121.4546,
-            site: '英專路',
-            img: 'measured_result/track_1_result.jpg'
-        }
-    ];
+    let trees = [];
 
-    // TODO: 待接 Species_Ref 樹種清單，目前先用固定選項展示排版
-    const speciesOptions = ['樟樹', '榕樹', '茄苳', '樟樹苗'];
+    // 張恆輔 8/25新增：樹種清單，「未知」為預設值（species 尚未辨識時顯示）
+    const speciesOptions = ['未知', '龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉'];
 
     const renderTrees = () => {
         tbody.innerHTML = '';
@@ -143,8 +131,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             tr.dataset.id = tree.id;
 
+            const currentSpecies = tree.species || '未知';
             const speciesOptionsHtml = speciesOptions
-                .map((name) => `<option value="${name}"${name === tree.species ? ' selected' : ''}>${name}</option>`)
+                .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
                 .join('');
 
             tr.innerHTML = `
@@ -153,7 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${tree.carbon}</td>
                 <td>${tree.lat}, ${tree.lng}</td>
                 <td>${tree.site}</td>
-                <td><button type="button" class="img-thumb" data-img="${tree.img || ''}" aria-label="查看辨識結果圖"></button></td>
+                <td><button type="button" class="img-thumb" aria-label="查看辨識結果圖"></button></td>
                 <td class="manage-actions">
                     <button type="button" class="confirm-btn" data-action="confirm">確認</button>
                     <button type="button" class="delete-btn" data-action="delete">刪除</button>
@@ -170,10 +159,10 @@ document.addEventListener('DOMContentLoaded', () => {
         modalPlaceholder.hidden = false;
     };
 
-    const openModal = (imgPath) => {
+    const openModal = (imgSrc) => {
         modalPlaceholder.hidden = false;
         modalImg.hidden = true;
-        if (imgPath) {
+        if (imgSrc) {
             modalImg.onload = () => {
                 modalPlaceholder.hidden = true;
                 modalImg.hidden = false;
@@ -182,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 modalImg.hidden = true;
                 modalPlaceholder.hidden = false;
             };
-            modalImg.src = `/static/${imgPath}`;
+            modalImg.src = imgSrc;
         }
         modal.hidden = false;
     };
@@ -194,7 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = Number(row.dataset.id);
 
         if (target.classList.contains('img-thumb')) {
-            openModal(target.dataset.img);
+            const tree = trees.find((t) => t.id === id);
+            openModal(tree ? tree.img : null);
             return;
         }
 
@@ -210,5 +200,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.target === modal) closeModal();
     });
 
-    renderTrees();
+    fetch('/api/admin/trees')
+        .then((res) => {
+            if (!res.ok) throw new Error('請求失敗');
+            return res.json();
+        })
+        .then((data) => {
+            trees = data;
+            renderTrees();
+        })
+        .catch((err) => {
+            console.error(err);
+            alert('讀取待審核資料失敗，請稍後再試');
+        });
 });

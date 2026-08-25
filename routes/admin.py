@@ -102,11 +102,12 @@ def api_logout():
 
 
 # ── API：樹木清單（含 pending）────────────────────────────────────
+# 張恆輔 8/25新增
 @admin_bp.route('/api/admin/trees', methods=['GET'])
 @login_required
 def api_get_trees():
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    trees = db_service.get_all_trees_admin()
+    return jsonify(trees), 200
 
 
 # ── API：更新樹木狀態（唯一能把 pending → confirmed 的入口）────────

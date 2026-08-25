@@ -8,7 +8,7 @@
     <a href="{{ url_for('admin.upload_page') }}" class="admin-tab">資料上傳</a>
 </nav>
 
-{# 張恆輔 8/17新增：待審核資料表格（樹種下拉／圖片縮圖／確認・刪除），資料串接前先用假資料展示排版 #}
+{# 張恆輔 8/25新增：待審核資料表格（樹種下拉／圖片縮圖／確認・刪除），已接上 GET /api/admin/trees #}
 <div class="manage-page">
     <div class="manage-header">
         <h1>待審核資料</h1>
@@ -32,7 +32,7 @@
     <p class="manage-empty" id="manage-empty" hidden>目前沒有待審核資料</p>
 </div>
 
-{# 張恆輔 8/17新增：辨識結果圖彈窗，點「圖」欄縮圖觸發 #}
+{# 張恆輔 8/25新增：辨識結果圖彈窗，點「圖」欄縮圖觸發 #}
 <div class="img-modal" id="img-modal" hidden>
     <div class="img-modal-box">
         <div class="img-modal-header">辨識結果圖</div>
