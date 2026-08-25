@@ -14,10 +14,9 @@ import config
 api_bp = Blueprint('api', __name__)
 
 
-# 負責人：____
+# 負責人：蔡宗倫
 # 開發日期：2026/08/24
 # 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並回傳結果
-#      （純運算邏輯，不寫入資料庫）
 @api_bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
