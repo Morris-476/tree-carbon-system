@@ -231,16 +231,45 @@ def get_all_trees_admin():
         conn.close()
 
 
+# 張恆輔 8/25新增
 def update_tree_status(tree_id: int, new_status: str) -> bool:
-    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功（有找到該筆）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE Measurements SET status = ? WHERE record_id = ?",
+            new_status, tree_id
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"update_tree_status 更新失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
+# 張恆輔 8/25新增
 def delete_tree(tree_id: int) -> bool:
-    """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功（有找到該筆）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM Measurements WHERE record_id = ?", tree_id)
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"delete_tree 刪除失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 # ── 後台管理：使用者帳號 ─────────────────────────────────────────

@@ -11,7 +11,8 @@ from services import db as db_service
 
 admin_bp = Blueprint('admin', __name__)
 
-ALLOWED_STATUSES = frozenset({'confirmed', 'pending'})
+# 張恆輔 8/25修改：對齊資料庫實際存的值（'Pending'/'Approved'），不是文件寫的 pending/confirmed
+ALLOWED_STATUSES = frozenset({'Pending', 'Approved'})
 
 
 # ── 登入保護裝飾器 ────────────────────────────────────────────────
@@ -110,18 +111,30 @@ def api_get_trees():
     return jsonify(trees), 200
 
 
-# ── API：更新樹木狀態（唯一能把 pending → confirmed 的入口）────────
+# ── API：更新樹木狀態（唯一能把 Pending → Approved 的入口）─────────
+# 張恆輔 8/25新增
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['PUT'])
 @login_required
 def api_update_tree(tree_id: int):
     """status 只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    data = request.get_json(silent=True) or {}
+    new_status = data.get('status')
+
+    if new_status not in ALLOWED_STATUSES:
+        return jsonify({'error': 'status 格式錯誤'}), 400
+
+    if not db_service.update_tree_status(tree_id, new_status):
+        return jsonify({'error': '更新失敗，查無此筆資料'}), 400
+
+    return jsonify({'success': True}), 200
 
 
 # ── API：刪除樹木記錄 ─────────────────────────────────────────────
+# 張恆輔 8/25新增
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['DELETE'])
 @login_required
 def api_delete_tree(tree_id: int):
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    if not db_service.delete_tree(tree_id):
+        return jsonify({'error': '查無此筆資料'}), 404
+
+    return jsonify({'success': True}), 200
