@@ -188,10 +188,41 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (target.dataset.action === 'confirm' || target.dataset.action === 'delete') {
-            // TODO: 待接 PUT /api/admin/trees/<id>（確認）與 DELETE（刪除），目前先在前端移除示範
-            trees = trees.filter((tree) => tree.id !== id);
-            renderTrees();
+        if (target.dataset.action === 'confirm') {
+            fetch(`/api/admin/trees/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'Approved' })
+            })
+                .then((res) => {
+                    if (!res.ok) throw new Error('請求失敗');
+                    return res.json();
+                })
+                .then(() => {
+                    trees = trees.filter((tree) => tree.id !== id);
+                    renderTrees();
+                })
+                .catch((err) => {
+                    console.error(err);
+                    alert('確認失敗，請稍後再試');
+                });
+            return;
+        }
+
+        if (target.dataset.action === 'delete') {
+            fetch(`/api/admin/trees/${id}`, { method: 'DELETE' })
+                .then((res) => {
+                    if (!res.ok) throw new Error('請求失敗');
+                    return res.json();
+                })
+                .then(() => {
+                    trees = trees.filter((tree) => tree.id !== id);
+                    renderTrees();
+                })
+                .catch((err) => {
+                    console.error(err);
+                    alert('刪除失敗，請稍後再試');
+                });
         }
     });
 
