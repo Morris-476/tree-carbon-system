@@ -188,41 +188,24 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // 負責人：陳政雍 8/27 串接確認／刪除 API
         if (target.dataset.action === 'confirm') {
             fetch(`/api/admin/trees/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Approved' })
             })
-                .then((res) => {
-                    if (!res.ok) throw new Error('請求失敗');
-                    return res.json();
-                })
-                .then(() => {
-                    trees = trees.filter((tree) => tree.id !== id);
-                    renderTrees();
-                })
-                .catch((err) => {
-                    console.error(err);
-                    alert('確認失敗，請稍後再試');
-                });
+                .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
+                .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
+                .catch((err) => { console.error(err); alert('確認失敗，請稍後再試'); });
             return;
         }
-
         if (target.dataset.action === 'delete') {
             fetch(`/api/admin/trees/${id}`, { method: 'DELETE' })
-                .then((res) => {
-                    if (!res.ok) throw new Error('請求失敗');
-                    return res.json();
-                })
-                .then(() => {
-                    trees = trees.filter((tree) => tree.id !== id);
-                    renderTrees();
-                })
-                .catch((err) => {
-                    console.error(err);
-                    alert('刪除失敗，請稍後再試');
-                });
+                .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
+                .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
+                .catch((err) => { console.error(err); alert('刪除失敗，請稍後再試'); });
+            return;
         }
     });
 
