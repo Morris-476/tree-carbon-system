@@ -64,10 +64,12 @@ def _get_or_create_species(cursor, species_name: str) -> int:
     raise NotImplementedError("此函式尚未實作")
 
 
+# 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
 # ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
     """回傳 (tree_list, db_status)，供 routes/pages.py 的地圖頁使用。
-    tree_list 中每筆需含 species_name, carbon_absorpation, latitude, longitude, img 欄位。
+    tree_list 中每筆需含 record_id, species_name, dbh, carbon_absorpation,
+    latitude, longitude, site_name, img 欄位。
     img 為 data URI 字串（由 image_data 二進位欄位轉換而來），無圖片時為 None。
     db_status 為 "connected" 或 "disconnected"。
     """
@@ -78,10 +80,13 @@ def get_tree_map_data():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT
+                record_id,
                 species_name,
+                dbh,
                 carbon_absorpation,
                 latitude,
                 longitude,
+                site_name,
                 image_data
             FROM v_TreeCompleteData
         """)
@@ -99,6 +104,7 @@ def get_tree_map_data():
 
 # 負責人：陳信睿 8/18 首頁排版
 # ── 首頁統計查詢（僅 confirmed）──────────────────────────────────
+# 負責人：陳政雍 8/27 修正 status 值改為 Approved、固碳量欄位改用 carbon_absorpation
 def get_stats():
     """回傳全站統計數字，供首頁使用。
     回傳 dict：{'total_trees': ..., 'total_carbon': ...}。
@@ -110,9 +116,9 @@ def get_stats():
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) AS total_trees, SUM(carbon) AS total_carbon
+            SELECT COUNT(*) AS total_trees, SUM(carbon_absorpation) AS total_carbon
             FROM Measurements
-            WHERE status = 'confirmed'
+            WHERE status = 'Approved'
         """)
         columns = [col[0] for col in cursor.description]
         row = cursor.fetchone()
@@ -231,16 +237,44 @@ def get_all_trees_admin():
         conn.close()
 
 
+# 負責人：陳政雍 8/27 完成確認／刪除功能：實作 update_tree_status()、delete_tree()
 def update_tree_status(tree_id: int, new_status: str) -> bool:
-    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功（有找到該筆）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE Measurements SET status = ? WHERE record_id = ?",
+            new_status, tree_id
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"update_tree_status 更新失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 def delete_tree(tree_id: int) -> bool:
-    """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功（有找到該筆）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM Measurements WHERE record_id = ?", tree_id)
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"delete_tree 刪除失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 # ── 後台管理：使用者帳號 ─────────────────────────────────────────

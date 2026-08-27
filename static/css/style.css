@@ -313,6 +313,23 @@ a {
     font-size: 0.95rem;
 }
 
+/* 負責人：陳政雍 8/27 新增 .dashboard-table 樣式（沿用 .manage-table）*/
+.dashboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-top: 1px solid #000;
+    border-left: 1px solid #000;
+}
+
+.dashboard-table th,
+.dashboard-table td {
+    border-right: 1px solid #000;
+    border-bottom: 1px solid #000;
+    padding: 10px 12px;
+    text-align: center;
+    font-size: 0.95rem;
+}
+
 .species-select {
     border: 1px solid #000;
     background: #fff;
