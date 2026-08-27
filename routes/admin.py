@@ -127,6 +127,7 @@ def api_update_tree(tree_id: int):
 
 
 # ── API：刪除樹木記錄 ─────────────────────────────────────────────
+# 張恆輔 8/25新增
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['DELETE'])
 @login_required
 def api_delete_tree(tree_id: int):

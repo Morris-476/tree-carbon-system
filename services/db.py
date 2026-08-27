@@ -259,6 +259,7 @@ def update_tree_status(tree_id: int, new_status: str) -> bool:
         conn.close()
 
 
+# 張恆輔 8/25新增
 def delete_tree(tree_id: int) -> bool:
     """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功（有找到該筆）。"""
     conn = get_db_connection()
