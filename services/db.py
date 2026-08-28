@@ -209,10 +209,6 @@ def save_sensor_sync_records(records: list) -> dict:
         conn.close()
 
 
-# ── 後台管理：樹木清單（含所有 status）──────────────────────────
-def get_all_trees_admin():
-    """後台用：回傳含 status 的完整清單（pending + confirmed）。
-    每筆需含 id, species, dbh, carbon, lat, lng, recorded_at, img_url, status 欄位。
 # 張恆輔 8/25新增：'25.0883747N' 這種字串轉成帶正負號的十進位度數，S/W 為負
 def _parse_coord(raw):
     if not raw:

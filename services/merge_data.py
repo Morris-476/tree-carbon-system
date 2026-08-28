@@ -68,8 +68,8 @@ def _read_rtk_csv(rtk_path: str) -> pd.DataFrame:
 def align_sensor_data(
     arduino_path: str,
     rtk_path: str,
-    video_filename: str | None = None,
-    video_start_at: datetime | None = None,
+    video_filename: "str | None" = None,
+    video_start_at: "datetime | None" = None,
     max_gap_seconds: int = 3,
 ) -> dict:
     """
