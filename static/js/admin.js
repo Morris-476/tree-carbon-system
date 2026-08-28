@@ -96,3 +96,201 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// 張恆輔 8/25新增：數據管理維護頁（待審核資料表格 + 辨識結果圖彈窗）
+document.addEventListener('DOMContentLoaded', () => {
+    const tbody = document.getElementById('manage-tbody');
+    if (!tbody) return;
+
+    const badge = document.getElementById('pending-badge');
+    const table = document.querySelector('.manage-table');
+    const emptyEl = document.getElementById('manage-empty');
+    const modal = document.getElementById('img-modal');
+    const modalImg = document.getElementById('img-modal-img');
+    const modalPlaceholder = document.getElementById('img-modal-placeholder');
+    const modalCloseBtn = document.getElementById('img-modal-close');
+
+    let trees = [];
+
+    // 張恆輔 8/25新增：樹種清單，「未知」為預設值（species 尚未辨識時顯示）
+    const speciesOptions = ['未知', '龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉'];
+
+    const renderTrees = () => {
+        tbody.innerHTML = '';
+        badge.textContent = `${trees.length} 筆待審查`;
+
+        if (trees.length === 0) {
+            table.hidden = true;
+            emptyEl.hidden = false;
+            return;
+        }
+        table.hidden = false;
+        emptyEl.hidden = true;
+
+        trees.forEach((tree) => {
+            const tr = document.createElement('tr');
+            tr.dataset.id = tree.id;
+
+            tr.innerHTML = `
+                <td>${tree.id}</td>
+                <td class="editable-cell" data-field="species">${tree.species || '未知'}</td>
+                <td class="editable-cell" data-field="dbh">${tree.dbh}</td>
+                <td class="editable-cell" data-field="carbon">${tree.carbon}</td>
+                <td>${tree.lat}, ${tree.lng}</td>
+                <td>${tree.site}</td>
+                <td><button type="button" class="img-thumb" aria-label="查看辨識結果圖"></button></td>
+                <td class="manage-actions">
+                    <button type="button" class="confirm-btn" data-action="confirm">確認</button>
+                    <button type="button" class="delete-btn" data-action="delete">刪除</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    };
+
+    // 張恆輔 8/28新增：雙擊「樹種」「樹徑」「固碳量」變成輸入框編輯
+    // 樹種目前只改畫面，不會存回資料庫（species_id 是掛在 Trees，31 筆全共用同一個
+    // Tree_ID，貿然寫回去會連帶把其他列的樹種也改掉，需另外確認才能接寫入）
+    const startEditCell = (cell) => {
+        if (cell.querySelector('input, select')) return;
+
+        const row = cell.closest('tr');
+        const id = Number(row.dataset.id);
+        const tree = trees.find((t) => t.id === id);
+        if (!tree) return;
+
+        const field = cell.dataset.field;
+        const originalValue = tree[field];
+
+        let input;
+        if (field === 'species') {
+            input = document.createElement('select');
+            input.className = 'species-select';
+            const currentSpecies = originalValue || '未知';
+            input.innerHTML = speciesOptions
+                .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
+                .join('');
+        } else {
+            input = document.createElement('input');
+            input.type = 'number';
+            input.step = '0.1';
+            input.className = 'cell-input';
+            input.value = originalValue != null ? originalValue : '';
+        }
+
+        cell.textContent = '';
+        cell.appendChild(input);
+        input.focus();
+        if (input.select) input.select();
+
+        let committed = false;
+        const commit = () => {
+            if (committed) return;
+            committed = true;
+
+            if (field === 'species') {
+                tree.species = input.value;
+                cell.textContent = tree.species;
+            } else {
+                const parsed = input.value === '' ? null : parseFloat(input.value);
+                tree[field] = Number.isNaN(parsed) ? originalValue : parsed;
+                cell.textContent = tree[field];
+            }
+        };
+
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') input.blur();
+        });
+        if (field === 'species') {
+            input.addEventListener('change', () => input.blur());
+        }
+    };
+
+    const closeModal = () => {
+        modal.hidden = true;
+        modalImg.hidden = true;
+        modalImg.removeAttribute('src');
+        modalPlaceholder.hidden = false;
+    };
+
+    const openModal = (imgSrc) => {
+        modalPlaceholder.hidden = false;
+        modalImg.hidden = true;
+        if (imgSrc) {
+            modalImg.onload = () => {
+                modalPlaceholder.hidden = true;
+                modalImg.hidden = false;
+            };
+            modalImg.onerror = () => {
+                modalImg.hidden = true;
+                modalPlaceholder.hidden = false;
+            };
+            modalImg.src = imgSrc;
+        }
+        modal.hidden = false;
+    };
+
+    tbody.addEventListener('dblclick', (event) => {
+        const cell = event.target.closest('.editable-cell');
+        if (!cell) return;
+        startEditCell(cell);
+    });
+
+    tbody.addEventListener('click', (event) => {
+        const target = event.target;
+        const row = target.closest('tr');
+        if (!row) return;
+        const id = Number(row.dataset.id);
+
+        if (target.classList.contains('img-thumb')) {
+            const tree = trees.find((t) => t.id === id);
+            openModal(tree ? tree.img : null);
+            return;
+        }
+
+        // 負責人：陳政雍 8/27 串接確認／刪除 API
+        if (target.dataset.action === 'confirm') {
+            const tree = trees.find((t) => t.id === id);
+            fetch(`/api/admin/trees/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: 'Approved',
+                    dbh: tree ? tree.dbh : null,
+                    carbon: tree ? tree.carbon : null
+                })
+            })
+                .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
+                .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
+                .catch((err) => { console.error(err); alert('確認失敗，請稍後再試'); });
+            return;
+        }
+        if (target.dataset.action === 'delete') {
+            fetch(`/api/admin/trees/${id}`, { method: 'DELETE' })
+                .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
+                .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
+                .catch((err) => { console.error(err); alert('刪除失敗，請稍後再試'); });
+            return;
+        }
+    });
+
+    modalCloseBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+    });
+
+    fetch('/api/admin/trees')
+        .then((res) => {
+            if (!res.ok) throw new Error('請求失敗');
+            return res.json();
+        })
+        .then((data) => {
+            trees = data;
+            renderTrees();
+        })
+        .catch((err) => {
+            console.error(err);
+            alert('讀取待審核資料失敗，請稍後再試');
+        });
+});
