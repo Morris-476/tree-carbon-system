@@ -11,7 +11,7 @@ from services import db as db_service
 
 admin_bp = Blueprint('admin', __name__)
 
-# 張恆輔 8/25修改：對齊資料庫實際存的值（'Pending'/'Approved'），不是文件寫的 pending/confirmed
+# 負責人：陳政雍 8/27 修正允許值為 Pending／Approved
 ALLOWED_STATUSES = frozenset({'Pending', 'Approved'})
 
 
@@ -111,8 +111,8 @@ def api_get_trees():
     return jsonify(trees), 200
 
 
-# ── API：更新樹木狀態（唯一能把 Pending → Approved 的入口）─────────
-# 張恆輔 8/25新增
+# ── API：更新樹木狀態（唯一能把 pending → confirmed 的入口）────────
+# 負責人：陳政雍 8/27 完成確認／刪除 API
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['PUT'])
 @login_required
 def api_update_tree(tree_id: int):
@@ -121,7 +121,6 @@ def api_update_tree(tree_id: int):
     """
     data = request.get_json(silent=True) or {}
     new_status = data.get('status')
-
     if new_status not in ALLOWED_STATUSES:
         return jsonify({'error': 'status 格式錯誤'}), 400
 
@@ -134,7 +133,6 @@ def api_update_tree(tree_id: int):
 
     if not db_service.update_tree_status(tree_id, new_status, dbh=dbh, carbon=carbon):
         return jsonify({'error': '更新失敗，查無此筆資料'}), 400
-
     return jsonify({'success': True}), 200
 
 
@@ -144,6 +142,5 @@ def api_update_tree(tree_id: int):
 @login_required
 def api_delete_tree(tree_id: int):
     if not db_service.delete_tree(tree_id):
-        return jsonify({'error': '查無此筆資料'}), 404
-
+        return jsonify({'error': '刪除失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
