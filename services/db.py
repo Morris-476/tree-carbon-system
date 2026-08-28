@@ -35,14 +35,7 @@ def get_db_connection():
 
 
 def _img_bin_to_data_uri(img_bin) -> "str | None":
-    """把資料庫 image_data（VARBINARY）讀出的二進位內容轉成前端可直接用的
-    data URI（data:image/...;base64,...），供 <img src> 直接顯示。
-    img_bin 為 None 時回傳 None（不拋出例外）。
-
-    圖片一律直接以二進位存入資料庫的 image_data 欄位，不寫檔到 static/img/。
-    寫入時同理：INSERT/UPDATE 直接把 bytes 帶入 image_data 參數即可，
-    pyodbc 會自動對應到 VARBINARY(MAX)，不需要額外轉換。
-    """
+    """把圖片二進位內容轉成前端可直接用的 data URI 字串。"""
     if img_bin is None:
         return None
     img_bytes = bytes(img_bin)
@@ -67,12 +60,7 @@ def _get_or_create_species(cursor, species_name: str) -> int:
 # 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
 # ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
-    """回傳 (tree_list, db_status)，供 routes/pages.py 的地圖頁使用。
-    tree_list 中每筆需含 record_id, species_name, dbh, carbon_absorpation,
-    latitude, longitude, site_name, img 欄位。
-    img 為 data URI 字串（由 image_data 二進位欄位轉換而來），無圖片時為 None。
-    db_status 為 "connected" 或 "disconnected"。
-    """
+    """地圖頁用：回傳樹木清單與資料庫連線狀態。"""
     conn = get_db_connection()
     if conn is None:
         return [], "disconnected"
@@ -106,10 +94,7 @@ def get_tree_map_data():
 # ── 首頁統計查詢（僅 confirmed）──────────────────────────────────
 # 負責人：陳政雍 8/27 修正 status 值改為 Approved、固碳量欄位改用 carbon_absorpation
 def get_stats():
-    """回傳全站統計數字，供首頁使用。
-    回傳 dict：{'total_trees': ..., 'total_carbon': ...}。
-    連線失敗或查詢例外時回傳 {'total_trees': 0, 'total_carbon': 0}。
-    """
+    """回傳全站統計數字，供首頁使用。"""
     conn = get_db_connection()
     if conn is None:
         return {'total_trees': 0, 'total_carbon': 0}
@@ -136,20 +121,14 @@ def get_stats():
 
 # ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
 def get_tree_list():
-    """回傳樹木清單，供 routes/pages.py 的資料展示頁使用。
-    每筆需含 id, species, dbh, carbon, recorded_at, img_url 欄位。
-    img_url 請用 _img_bin_to_data_uri() 把 SELECT 出來的 image_data 轉成 data URI。
-    """
+    """回傳樹木清單，供資料展示頁使用。"""
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
 
 
 # ── 網頁上傳寫入（status='confirmed'，直接公開）──────────────────
 def save_tree_record(species, dbh, carbon, img_bin):
-    """儲存網頁上傳的辨識結果（無 GPS 座標）。
-    img_bin 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
-    （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
-    """
+    """儲存網頁上傳的辨識結果（無 GPS 座標）。"""
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
 
@@ -229,9 +208,7 @@ def _parse_coord(raw):
 # —— 該 view 內部用 INNER JOIN，Trees.site_id／species_id 為 NULL 時
 # 會把整筆濾掉，用 LEFT JOIN 才不會受影響。
 def get_all_trees_admin():
-    """後台用：回傳待審核清單（Measurements.status = 'pending'，不分大小寫）。
-    每筆含 id, species, dbh, carbon, lat, lng, site, status, recorded_at, img 欄位。
-    """
+    """後台用：回傳待審核清單。"""
     conn = get_db_connection()
     if conn is None:
         return []
@@ -387,9 +364,6 @@ def create_admin_user(username: str, password_hash: str) -> bool:
 
 # ── CLI 工具寫入（供 Tree-Trunk-Segmentation/main.py 的桌面版呼叫）
 def insert_record_with_location(species, dbh, carbon, lat, lon, thumbnail_data=None):
-    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄（status='confirmed'）。
-    thumbnail_data 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
-    （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
-    """
+    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄。"""
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")

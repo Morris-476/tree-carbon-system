@@ -18,11 +18,7 @@ ALLOWED_STATUSES = frozenset({'Pending', 'Approved'})
 # ── 登入保護裝飾器 ────────────────────────────────────────────────
 # 陳政雍 8/1修改
 def login_required(f):
-    """
-    套在需要登入的路由上。
-    - API 路由（/api/ 開頭或 Accept: application/json）回傳 401 JSON
-    - 頁面路由轉址到登入頁
-    """
+    """套在需要登入的路由上，未登入時 API 回 401、頁面轉址登入頁。"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'admin_id' not in session:
@@ -73,10 +69,7 @@ def manage_page():
 # 陳政雍 8/1修改
 @admin_bp.route('/api/admin/login', methods=['POST'])
 def api_login():
-    """
-    接受 JSON 格式的 {username, password}，驗證成功後建立 session。
-    帳號或密碼錯誤時統一回傳 401，不區分是帳號不存在還是密碼錯誤。
-    """
+    """接受 JSON 格式的 {username, password}，驗證成功後建立 session。"""
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
     password = (data.get('password') or '').strip()
