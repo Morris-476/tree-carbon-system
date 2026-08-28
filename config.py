@@ -11,3 +11,5 @@ DB_TRUST_CERT = os.environ.get('DB_TRUST_CERT', 'no')
 MODEL_PATH = os.environ.get('MODEL_PATH', 'Tree-Trunk-Segmentation/best.pt')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', '')
+
+UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')

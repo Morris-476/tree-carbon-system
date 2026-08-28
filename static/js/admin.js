@@ -87,7 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json().catch(() => ({}));
 
         if (res.ok) {
-            alert('上傳成功，已送交管理員審核');
+            alert(`時間對齊完成，共 ${data.total_count} 筆，其中 ${data.matched_gps_count} 筆配對到 GPS 座標`);
             form.reset();
             resetFilePills();
         } else {
