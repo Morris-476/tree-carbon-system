@@ -139,6 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
             tr.innerHTML = `
                 <td>${tree.id}</td>
                 <td><select class="species-select">${speciesOptionsHtml}</select></td>
+                <td>${tree.dbh}</td>
                 <td>${tree.carbon}</td>
                 <td>${tree.lat}, ${tree.lng}</td>
                 <td>${tree.site}</td>
