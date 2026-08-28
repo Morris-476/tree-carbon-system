@@ -1,3 +1,4 @@
+# 陳信睿 8/28 修改
 """
 services/db.py
 所有 SQL Server 查詢邏輯的唯一入口。
@@ -5,10 +6,16 @@ services/db.py
 連線憑證一律從環境變數讀取，不寫死任何帳號密碼。
 """
 import base64
+import datetime
 import os
 import uuid
 import pyodbc
 import config
+
+# IPCC 預設含碳率（生質量中碳的比例），用於由 carbon_absorpation 反推 biomass。
+# Measurements.biomass 為 NOT NULL，但目前專案內尚無正式的生質量計算公式，
+# 待負責固碳計算的同學補上真正公式後，這裡應替換掉。
+CARBON_FRACTION = 0.47
 
 
 def get_db_connection():
@@ -60,8 +67,46 @@ def _img_bin_to_data_uri(img_bin) -> "str | None":
 
 def _get_or_create_species(cursor, species_name: str) -> int:
     """查詢 Species_Ref，若不存在則以預設係數新增。回傳 species_id。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    cursor.execute(
+        "SELECT species_id FROM Species_Ref WHERE species_name = ?", species_name
+    )
+    row = cursor.fetchone()
+    if row is not None:
+        return row[0]
+    cursor.execute(
+        "INSERT INTO Species_Ref (species_name) OUTPUT INSERTED.species_id VALUES (?)",
+        species_name
+    )
+    return cursor.fetchone()[0]
+
+
+# 這個 BUG 的核心修法：Trees.tracker_id 為 NOT NULL，代表每一棵「偵測到的樹」
+# 都必須有自己專屬的 tracker_id（ByteTrack 給的追蹤編號），才能各自對應到
+# 獨立的 Tree_ID。同一個 tracker_id 出現第二次，代表同一棵樹的另一次量測，
+# 才共用既有 Tree_ID；tracker_id 是全新的，或呼叫端沒有追蹤器可用（例如桌面
+# CLI 單張照片辨識），一律視為新樹、INSERT 一筆新的 Trees 記錄取得新 Tree_ID。
+# 絕對不可以省略 tracker_id 或用固定值頂替，否則所有偵測到的樹都會被誤綁成
+# 同一個 Tree_ID（這正是目前資料庫裡發生的問題）。
+def _get_or_create_tree_id(cursor, track_id, species_id=None,
+                            lat=None, lon=None, site_id=None) -> int:
+    """依 tracker_id 找出（或新增）對應的 Tree_ID。
+    track_id 為 None 時視為沒有追蹤資訊可比對，一律新增一筆 Trees 記錄。
+    """
+    if track_id is not None:
+        cursor.execute("SELECT Tree_ID FROM Trees WHERE tracker_id = ?", track_id)
+        row = cursor.fetchone()
+        if row is not None:
+            return row[0]
+    else:
+        cursor.execute("SELECT ISNULL(MAX(tracker_id), 0) + 1 FROM Trees")
+        track_id = cursor.fetchone()[0]
+
+    cursor.execute(
+        "INSERT INTO Trees (site_id, tracker_id, species_id, [LATITUDE N/S], [LONGITUDE E/W]) "
+        "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?, ?, ?)",
+        site_id, track_id, species_id, lat, lon
+    )
+    return cursor.fetchone()[0]
 
 
 # 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
@@ -80,14 +125,14 @@ def get_tree_map_data():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT
-                record_id,
-                species_name,
-                dbh,
-                carbon_absorpation,
-                latitude,
-                longitude,
-                site_name,
-                image_data
+                紀錄編號           AS record_id,
+                樹木種類           AS species_name,
+                樹徑cm             AS dbh,
+                固碳量             AS carbon_absorpation,
+                緯度               AS latitude,
+                經度               AS longitude,
+                巡檢案場           AS site_name,
+                樹木照片二進位     AS image_data
             FROM v_TreeCompleteData
         """)
         columns = [col[0] for col in cursor.description]
@@ -95,6 +140,10 @@ def get_tree_map_data():
         tree_list = [dict(zip(columns, row)) for row in rows]
         for tree in tree_list:
             tree['img'] = _img_bin_to_data_uri(tree.pop('image_data', None))
+            # 資料庫存的是 '25.0883747N' 這種帶方向字母的字串，Leaflet 的
+            # L.marker() 需要純數字，不轉換的話座標會變成 NaN、標記顯示不出來。
+            tree['latitude'] = _parse_coord(tree['latitude'])
+            tree['longitude'] = _parse_coord(tree['longitude'])
         return tree_list, "connected"
     except Exception as e:
         print(f"get_tree_map_data 查詢失敗: {e}")
@@ -157,10 +206,37 @@ def save_tree_record(species, dbh, carbon, img_bin):
 # ── 資料處理管線寫入（status 固定 pending，等待管理員審核）──────
 def save_pipeline_record(species, dbh, carbon, lat, lon,
                          fix_quality=None, distance_cm=None,
-                         track_id=None, status='pending'):
-    """管線上傳：含 GPS 座標，status 固定 pending，等待管理員審核後才公開。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+                         track_id=None, status='Pending'):
+    """管線上傳：含 GPS 座標，status 固定 pending，等待管理員審核後才公開。
+    track_id 應帶入 ByteTrack 給該棵樹的追蹤 ID：同一段影片裡同一棵樹的
+    多次量測要傳同一個 track_id（才會共用同一個 Tree_ID），不同棵樹要傳
+    不同的 track_id（見 _get_or_create_tree_id 說明）。
+    """
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        species_id = _get_or_create_species(cursor, species) if species else None
+        tree_id = _get_or_create_tree_id(cursor, track_id, species_id, lat, lon)
+
+        biomass = float(carbon) / CARBON_FRACTION
+        now = datetime.datetime.now()
+        cursor.execute(
+            "INSERT INTO Measurements "
+            "(Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME]) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tree_id, dbh, biomass, carbon, status,
+            now.strftime('%Y/%m/%d'), now.strftime('%H:%M:%S')
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"save_pipeline_record 寫入失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
 
 
 # 張恆輔 8/25新增：'25.0883747N' 這種字串轉成帶正負號的十進位度數，S/W 為負
@@ -179,12 +255,15 @@ def _parse_coord(raw):
 
 
 # ── 後台管理：樹木清單（僅 pending）───────────────────────────────
-# 直接查 Measurements/Trees/Sites/Species_Ref，不透過 v_AdminPendingQueue
-# —— 該 view 內部用 INNER JOIN，Trees.site_id／species_id 為 NULL 時
-# 會把整筆濾掉，用 LEFT JOIN 才不會受影響。
+# v_AdminPendingQueue 已改為 LEFT JOIN 並補上緯度／經度欄位，
+# 直接查這張 view 即可（view 內部已經用 WHERE m.status = N'Pending' 篩選過）。
 def get_all_trees_admin():
-    """後台用：回傳待審核清單（Measurements.status = 'pending'，不分大小寫）。
-    每筆含 id, species, dbh, carbon, lat, lng, site, status, recorded_at, img 欄位。
+    """後台用：回傳待審核清單（v_AdminPendingQueue 內部已篩選 status = 'Pending'）。
+    每筆含 id, tree_id, species, dbh, carbon, lat, lng, site, status, img 欄位。
+
+    id：這筆量測記錄本身的編號（record_id），確認／刪除單筆資料要用這個。
+    tree_id：這筆量測所屬的實體樹編號（Trees.Tree_ID）。同一棵樹被多次量測
+    時，多筆資料的 tree_id 會相同、但 id 各自不同，兩者不能混用。
     """
     conn = get_db_connection()
     if conn is None:
@@ -193,32 +272,25 @@ def get_all_trees_admin():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT
-                m.record_id           AS id,
-                sp.species_name        AS species,
-                m.dbh                   AS dbh,
-                m.carbon_absorpation    AS carbon,
-                s.site_name              AS site,
-                m.[DATE]                 AS measure_date,
-                m.[TIME]                  AS measure_time,
-                t.[LATITUDE N/S]           AS lat_raw,
-                t.[LONGITUDE E/W]           AS lng_raw,
-                m.image_data                 AS image_bin
-            FROM Measurements m
-            LEFT JOIN Trees t       ON t.Tree_ID = m.Tree_ID
-            LEFT JOIN Sites s       ON s.site_id = t.site_id
-            LEFT JOIN Species_Ref sp ON sp.species_id = t.species_id
-            WHERE LOWER(m.status) = 'pending'
+                紀錄編號     AS id,
+                Tree_ID      AS tree_id,
+                樹木種類     AS species,
+                樹徑cm       AS dbh,
+                固碳量       AS carbon,
+                巡檢案場     AS site,
+                緯度         AS lat_raw,
+                經度         AS lng_raw,
+                樹木照片二進位 AS image_bin
+            FROM v_AdminPendingQueue
         """)
         columns = [col[0] for col in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
         trees = []
         for row in rows:
-            recorded_at = ' '.join(
-                part for part in (row['measure_date'], row['measure_time']) if part
-            )
             trees.append({
                 'id': row['id'],
+                'tree_id': row['tree_id'],
                 'species': row['species'],
                 'dbh': float(row['dbh']) if row['dbh'] is not None else None,
                 'carbon': float(row['carbon']) if row['carbon'] is not None else None,
@@ -226,7 +298,6 @@ def get_all_trees_admin():
                 'lng': _parse_coord(row['lng_raw']),
                 'site': row['site'],
                 'status': 'pending',
-                'recorded_at': recorded_at or None,
                 'img': _img_bin_to_data_uri(row['image_bin']),
             })
         return trees
@@ -238,30 +309,16 @@ def get_all_trees_admin():
 
 
 # 負責人：陳政雍 8/27 完成確認／刪除功能：實作 update_tree_status()、delete_tree()
-# 張恆輔 8/28新增：dbh／carbon 可選（數據管理維護頁雙擊編輯後，按確認時一併存回），
-# 只更新有帶值的欄位。
-def update_tree_status(tree_id: int, new_status: str, dbh=None, carbon=None) -> bool:
-    """後台：更新 Measurements 審核狀態，可一併更新 dbh／carbon_absorpation。
-    回傳 True 表示更新成功（有找到該筆）。
-    """
-    fields = ['status = ?']
-    params = [new_status]
-    if dbh is not None:
-        fields.append('dbh = ?')
-        params.append(dbh)
-    if carbon is not None:
-        fields.append('carbon_absorpation = ?')
-        params.append(carbon)
-    params.append(tree_id)
-
+def update_tree_status(tree_id: int, new_status: str) -> bool:
+    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功（有找到該筆）。"""
     conn = get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
         cursor.execute(
-            f"UPDATE Measurements SET {', '.join(fields)} WHERE record_id = ?",
-            params
+            "UPDATE Measurements SET status = ? WHERE record_id = ?",
+            new_status, tree_id
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -341,9 +398,36 @@ def create_admin_user(username: str, password_hash: str) -> bool:
 
 # ── CLI 工具寫入（供 Tree-Trunk-Segmentation/main.py 的桌面版呼叫）
 def insert_record_with_location(species, dbh, carbon, lat, lon, thumbnail_data=None):
-    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄（status='confirmed'）。
+    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄（status='Approved'）。
     thumbnail_data 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
     （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
+
+    桌面版沒有影片追蹤器可判斷「是不是同一棵樹」，每次呼叫都視為偵測到一棵
+    新樹，一律建立新的 Trees 記錄（傳入 track_id=None，見
+    _get_or_create_tree_id），不會沿用舊的 Tree_ID。
     """
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        species_id = _get_or_create_species(cursor, species) if species else None
+        tree_id = _get_or_create_tree_id(cursor, None, species_id, lat, lon)
+
+        biomass = float(carbon) / CARBON_FRACTION
+        now = datetime.datetime.now()
+        cursor.execute(
+            "INSERT INTO Measurements "
+            "(Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], image_data) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tree_id, dbh, biomass, carbon, 'Approved',
+            now.strftime('%Y/%m/%d'), now.strftime('%H:%M:%S'), thumbnail_data
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"insert_record_with_location 寫入失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
