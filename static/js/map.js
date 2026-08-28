@@ -4,10 +4,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!mapEl) return;
 
     // 淡江大學校園座標
-    const map = L.map('treeMap').setView([25.1745, 121.4502], 17);
+    const map = L.map('treeMap').setView([25.1745, 121.4502], 19);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19
     }).addTo(map);
 
     const pinIcon = L.divIcon({

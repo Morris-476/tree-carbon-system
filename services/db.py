@@ -42,14 +42,7 @@ def get_db_connection():
 
 
 def _img_bin_to_data_uri(img_bin) -> "str | None":
-    """把資料庫 image_data（VARBINARY）讀出的二進位內容轉成前端可直接用的
-    data URI（data:image/...;base64,...），供 <img src> 直接顯示。
-    img_bin 為 None 時回傳 None（不拋出例外）。
-
-    圖片一律直接以二進位存入資料庫的 image_data 欄位，不寫檔到 static/img/。
-    寫入時同理：INSERT/UPDATE 直接把 bytes 帶入 image_data 參數即可，
-    pyodbc 會自動對應到 VARBINARY(MAX)，不需要額外轉換。
-    """
+    """把圖片二進位內容轉成前端可直接用的 data URI 字串。"""
     if img_bin is None:
         return None
     img_bytes = bytes(img_bin)
@@ -112,12 +105,7 @@ def _get_or_create_tree_id(cursor, track_id, species_id=None,
 # 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
 # ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
-    """回傳 (tree_list, db_status)，供 routes/pages.py 的地圖頁使用。
-    tree_list 中每筆需含 record_id, species_name, dbh, carbon_absorpation,
-    latitude, longitude, site_name, img 欄位。
-    img 為 data URI 字串（由 image_data 二進位欄位轉換而來），無圖片時為 None。
-    db_status 為 "connected" 或 "disconnected"。
-    """
+    """地圖頁用：回傳樹木清單與資料庫連線狀態。"""
     conn = get_db_connection()
     if conn is None:
         return [], "disconnected"
@@ -155,10 +143,7 @@ def get_tree_map_data():
 # ── 首頁統計查詢（僅 confirmed）──────────────────────────────────
 # 負責人：陳政雍 8/27 修正 status 值改為 Approved、固碳量欄位改用 carbon_absorpation
 def get_stats():
-    """回傳全站統計數字，供首頁使用。
-    回傳 dict：{'total_trees': ..., 'total_carbon': ...}。
-    連線失敗或查詢例外時回傳 {'total_trees': 0, 'total_carbon': 0}。
-    """
+    """回傳全站統計數字，供首頁使用。"""
     conn = get_db_connection()
     if conn is None:
         return {'total_trees': 0, 'total_carbon': 0}
@@ -185,20 +170,14 @@ def get_stats():
 
 # ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
 def get_tree_list():
-    """回傳樹木清單，供 routes/pages.py 的資料展示頁使用。
-    每筆需含 id, species, dbh, carbon, recorded_at, img_url 欄位。
-    img_url 請用 _img_bin_to_data_uri() 把 SELECT 出來的 image_data 轉成 data URI。
-    """
+    """回傳樹木清單，供資料展示頁使用。"""
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
 
 
 # ── 網頁上傳寫入（status='confirmed'，直接公開）──────────────────
 def save_tree_record(species, dbh, carbon, img_bin):
-    """儲存網頁上傳的辨識結果（無 GPS 座標）。
-    img_bin 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
-    （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
-    """
+    """儲存網頁上傳的辨識結果（無 GPS 座標）。"""
     # TODO: 待實作 — 負責人：____
     raise NotImplementedError("此函式尚未實作")
 
@@ -239,6 +218,52 @@ def save_pipeline_record(species, dbh, carbon, lat, lon,
         conn.close()
 
 
+# ── 時間對齊管線寫入（Arduino/RTK 對齊後的原始感測器資料）────────
+# 負責人：蔡宗倫
+# 開發日期：2026/08/22
+def save_sensor_sync_records(records: list) -> dict:
+    """寫入時間對齊後的原始感測器資料（Sensor_Sync_Records）。
+    此表僅存放 merge_data.py 對齊完的中繼資料，供之後影像追蹤（tracker）與
+    樹徑計算完成後，配合 track_id 寫入正式的 Trees / Measurements。
+    records 為 list of dict，欄位需對應 sql/create_tables.sql 中 Sensor_Sync_Records 的定義。
+    """
+    if not records:
+        return {'status': 'success', 'inserted': 0}
+
+    conn = get_db_connection()
+    if conn is None:
+        return {'status': 'error', 'message': '資料庫連線失敗'}
+    try:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO Sensor_Sync_Records (
+                merge_batch_id, arduino_tree_id, recorded_at,
+                latitude, longitude, rtk_height_m, rtk_speed_mps, rtk_heading_deg, rtk_tag,
+                laser_status, led_status, tof_dist1_cm, tof_dist2_cm,
+                rtk_gap_ms, video_offset_ms, video_filename
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r['merge_batch_id'], r['arduino_tree_id'], r['recorded_at'],
+                    r['latitude'], r['longitude'], r['rtk_height_m'], r['rtk_speed_mps'],
+                    r['rtk_heading_deg'], r['rtk_tag'],
+                    r['laser_status'], r['led_status'], r['tof_dist1_cm'], r['tof_dist2_cm'],
+                    r['rtk_gap_ms'], r['video_offset_ms'], r['video_filename'],
+                )
+                for r in records
+            ]
+        )
+        conn.commit()
+        return {'status': 'success', 'inserted': len(records)}
+    except Exception as e:
+        conn.rollback()
+        return {'status': 'error', 'message': f'寫入 Sensor_Sync_Records 失敗：{str(e)}'}
+    finally:
+        conn.close()
+
+
 # 張恆輔 8/25新增：'25.0883747N' 這種字串轉成帶正負號的十進位度數，S/W 為負
 def _parse_coord(raw):
     if not raw:
@@ -258,13 +283,7 @@ def _parse_coord(raw):
 # v_AdminPendingQueue 已改為 LEFT JOIN 並補上緯度／經度欄位，
 # 直接查這張 view 即可（view 內部已經用 WHERE m.status = N'Pending' 篩選過）。
 def get_all_trees_admin():
-    """後台用：回傳待審核清單（v_AdminPendingQueue 內部已篩選 status = 'Pending'）。
-    每筆含 id, tree_id, species, dbh, carbon, lat, lng, site, status, img 欄位。
-
-    id：這筆量測記錄本身的編號（record_id），確認／刪除單筆資料要用這個。
-    tree_id：這筆量測所屬的實體樹編號（Trees.Tree_ID）。同一棵樹被多次量測
-    時，多筆資料的 tree_id 會相同、但 id 各自不同，兩者不能混用。
-    """
+    """後台用：回傳待審核清單。"""
     conn = get_db_connection()
     if conn is None:
         return []
@@ -398,36 +417,6 @@ def create_admin_user(username: str, password_hash: str) -> bool:
 
 # ── CLI 工具寫入（供 Tree-Trunk-Segmentation/main.py 的桌面版呼叫）
 def insert_record_with_location(species, dbh, carbon, lat, lon, thumbnail_data=None):
-    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄（status='Approved'）。
-    thumbnail_data 為圖片二進位內容，INSERT 時直接帶入 Measurements.image_data
-    （VARBINARY 欄位）參數即可，不需寫檔到 static/img/。
-
-    桌面版沒有影片追蹤器可判斷「是不是同一棵樹」，每次呼叫都視為偵測到一棵
-    新樹，一律建立新的 Trees 記錄（傳入 track_id=None，見
-    _get_or_create_tree_id），不會沿用舊的 Tree_ID。
-    """
-    conn = get_db_connection()
-    if conn is None:
-        return False
-    try:
-        cursor = conn.cursor()
-        species_id = _get_or_create_species(cursor, species) if species else None
-        tree_id = _get_or_create_tree_id(cursor, None, species_id, lat, lon)
-
-        biomass = float(carbon) / CARBON_FRACTION
-        now = datetime.datetime.now()
-        cursor.execute(
-            "INSERT INTO Measurements "
-            "(Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], image_data) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            tree_id, dbh, biomass, carbon, 'Approved',
-            now.strftime('%Y/%m/%d'), now.strftime('%H:%M:%S'), thumbnail_data
-        )
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"insert_record_with_location 寫入失敗: {e}")
-        conn.rollback()
-        return False
-    finally:
-        conn.close()
+    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄。"""
+    # TODO: 待實作 — 負責人：____
+    raise NotImplementedError("此函式尚未實作")
