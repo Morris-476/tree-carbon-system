@@ -231,17 +231,30 @@ def get_all_trees_admin():
         conn.close()
 
 
-# 張恆輔 8/25新增
-def update_tree_status(tree_id: int, new_status: str) -> bool:
-    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功（有找到該筆）。"""
+# 張恆輔 8/28新增：status 必填，dbh／carbon 可選（數據管理維護頁雙擊編輯後，
+# 按確認時一併存回）。只更新有帶值的欄位。
+def update_tree_status(tree_id: int, new_status: str, dbh=None, carbon=None) -> bool:
+    """後台：更新 Measurements 審核狀態，可一併更新 dbh／carbon_absorpation。
+    回傳 True 表示更新成功（有找到該筆）。
+    """
+    fields = ['status = ?']
+    params = [new_status]
+    if dbh is not None:
+        fields.append('dbh = ?')
+        params.append(dbh)
+    if carbon is not None:
+        fields.append('carbon_absorpation = ?')
+        params.append(carbon)
+    params.append(tree_id)
+
     conn = get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE Measurements SET status = ? WHERE record_id = ?",
-            new_status, tree_id
+            f"UPDATE Measurements SET {', '.join(fields)} WHERE record_id = ?",
+            params
         )
         conn.commit()
         return cursor.rowcount > 0

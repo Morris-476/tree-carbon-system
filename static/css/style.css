@@ -321,6 +321,20 @@ a {
     font-size: 0.95rem;
 }
 
+/* 張恆輔 8/28新增：雙擊編輯的儲存格（樹種／樹徑／固碳量） */
+.editable-cell {
+    cursor: pointer;
+}
+
+.cell-input {
+    width: 100%;
+    border: 1px solid #000;
+    background: #fff;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 0.95rem;
+}
+
 .img-thumb {
     width: 32px;
     height: 32px;
