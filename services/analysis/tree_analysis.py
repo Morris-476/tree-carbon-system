@@ -4,17 +4,18 @@ import numpy as np
 # ========== 設定 ==========
 ARDUINO_FILE = 'arduino_final.csv'
 MIN_RECORDS = 2       # 少於此筆數標記為存疑
-GAP_SECONDS = 1        # 間隔超過幾秒視為不同棵樹
-MAX_VALID_DIST = 800   # ToF 有效距離上限（cm）
+GAP_SECONDS = 2       # 間隔超過幾秒視為不同棵樹
+MAX_VALID_DIST = 800  # ToF 有效距離上限（cm）
 
 # ========== 讀取 Arduino 數據 ==========
 df = pd.read_csv(ARDUINO_FILE)
 df.columns = df.columns.str.strip()
 df['DATETIME'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
 
-# 砍掉距離為 0（無效讀值）或超過上限（感測器飽和值）的讀值
+# 只保留 ToF1 NORMAL 且距離在有效範圍內
 valid = df[
-    (df['Dist1_cm'] != 0) &
+    (df['ToF1_Status'] == 'NORMAL') &
+    (df['Dist1_cm'] > 0) &
     (df['Dist1_cm'] <= MAX_VALID_DIST)
 ].copy().reset_index(drop=True)
 
