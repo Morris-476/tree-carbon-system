@@ -116,12 +116,22 @@ def api_get_trees():
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['PUT'])
 @login_required
 def api_update_tree(tree_id: int):
-    """status 只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。"""
+    """status 必填，只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。
+    dbh、carbon 可選（雙擊編輯後跟著確認一起送），型別錯誤回傳 400。
+    """
     data = request.get_json(silent=True) or {}
     new_status = data.get('status')
     if new_status not in ALLOWED_STATUSES:
         return jsonify({'error': 'status 格式錯誤'}), 400
-    if not db_service.update_tree_status(tree_id, new_status):
+
+    dbh = data.get('dbh')
+    carbon = data.get('carbon')
+    if dbh is not None and not isinstance(dbh, (int, float)):
+        return jsonify({'error': 'dbh 格式錯誤'}), 400
+    if carbon is not None and not isinstance(carbon, (int, float)):
+        return jsonify({'error': 'carbon 格式錯誤'}), 400
+
+    if not db_service.update_tree_status(tree_id, new_status, dbh=dbh, carbon=carbon):
         return jsonify({'error': '更新失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
 

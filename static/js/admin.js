@@ -131,16 +131,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             tr.dataset.id = tree.id;
 
-            const currentSpecies = tree.species || '未知';
-            const speciesOptionsHtml = speciesOptions
-                .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
-                .join('');
-
             tr.innerHTML = `
                 <td>${tree.id}</td>
-                <td><select class="species-select">${speciesOptionsHtml}</select></td>
-                <td>${tree.dbh}</td>
-                <td>${tree.carbon}</td>
+                <td class="editable-cell" data-field="species">${tree.species || '未知'}</td>
+                <td class="editable-cell" data-field="dbh">${tree.dbh}</td>
+                <td class="editable-cell" data-field="carbon">${tree.carbon}</td>
                 <td>${tree.lat}, ${tree.lng}</td>
                 <td>${tree.site}</td>
                 <td><button type="button" class="img-thumb" aria-label="查看辨識結果圖"></button></td>
@@ -151,6 +146,65 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             tbody.appendChild(tr);
         });
+    };
+
+    // 張恆輔 8/28新增：雙擊「樹種」「樹徑」「固碳量」變成輸入框編輯
+    // 樹種目前只改畫面，不會存回資料庫（species_id 是掛在 Trees，31 筆全共用同一個
+    // Tree_ID，貿然寫回去會連帶把其他列的樹種也改掉，需另外確認才能接寫入）
+    const startEditCell = (cell) => {
+        if (cell.querySelector('input, select')) return;
+
+        const row = cell.closest('tr');
+        const id = Number(row.dataset.id);
+        const tree = trees.find((t) => t.id === id);
+        if (!tree) return;
+
+        const field = cell.dataset.field;
+        const originalValue = tree[field];
+
+        let input;
+        if (field === 'species') {
+            input = document.createElement('select');
+            input.className = 'species-select';
+            const currentSpecies = originalValue || '未知';
+            input.innerHTML = speciesOptions
+                .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
+                .join('');
+        } else {
+            input = document.createElement('input');
+            input.type = 'number';
+            input.step = '0.1';
+            input.className = 'cell-input';
+            input.value = originalValue != null ? originalValue : '';
+        }
+
+        cell.textContent = '';
+        cell.appendChild(input);
+        input.focus();
+        if (input.select) input.select();
+
+        let committed = false;
+        const commit = () => {
+            if (committed) return;
+            committed = true;
+
+            if (field === 'species') {
+                tree.species = input.value;
+                cell.textContent = tree.species;
+            } else {
+                const parsed = input.value === '' ? null : parseFloat(input.value);
+                tree[field] = Number.isNaN(parsed) ? originalValue : parsed;
+                cell.textContent = tree[field];
+            }
+        };
+
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') input.blur();
+        });
+        if (field === 'species') {
+            input.addEventListener('change', () => input.blur());
+        }
     };
 
     const closeModal = () => {
@@ -177,6 +231,12 @@ document.addEventListener('DOMContentLoaded', () => {
         modal.hidden = false;
     };
 
+    tbody.addEventListener('dblclick', (event) => {
+        const cell = event.target.closest('.editable-cell');
+        if (!cell) return;
+        startEditCell(cell);
+    });
+
     tbody.addEventListener('click', (event) => {
         const target = event.target;
         const row = target.closest('tr');
@@ -191,10 +251,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 負責人：陳政雍 8/27 串接確認／刪除 API
         if (target.dataset.action === 'confirm') {
+            const tree = trees.find((t) => t.id === id);
             fetch(`/api/admin/trees/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'Approved' })
+                body: JSON.stringify({
+                    status: 'Approved',
+                    dbh: tree ? tree.dbh : null,
+                    carbon: tree ? tree.carbon : null
+                })
             })
                 .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
                 .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
