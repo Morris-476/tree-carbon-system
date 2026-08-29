@@ -137,7 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
                 .join('');
 
+            // 張恆輔 8/29修正：補回「編號」欄（原本被誤換成 tree_id），Tree_ID 改成獨立一欄
             tr.innerHTML = `
+                <td>${tree.id}</td>
                 <td>${tree.tree_id}</td>
                 <td><select class="species-select">${speciesOptionsHtml}</select></td>
                 <td>${tree.dbh}</td>

@@ -1,6 +1,8 @@
 """
 services/analysis/tracker.py
-ByteTrack 多物件追蹤，透過 ultralytics 內建支援實作。
+# 負責人：Morris
+# 開發日期：2026/08/02
+# 用途：ByteTrack 多物件追蹤，透過 ultralytics 內建支援實作。
 不需要額外安裝獨立的 ByteTrack 套件，ultralytics 套件已內建。
 
 設計原則：
