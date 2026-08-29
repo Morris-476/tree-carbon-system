@@ -250,7 +250,96 @@ def save_pipeline_record(species, dbh, carbon, lat, lon,
         conn.close()
 
 
-# ── 時間對齊管線寫入（Arduino/RTK 對齊後的原始感測器資料）────────
+# ── 時間對齊 + 影片截圖寫入 dbo.Measurements ─────────────────────
+# 負責人：蔡宗倫
+# 開發日期：2026/08/29
+# 補齊 Measurements 目前沒有、但這次寫入需要的欄位（已存在就不動）。
+def _ensure_measurement_columns(cursor):
+    columns = {
+        'latitude': 'FLOAT NULL',
+        'longitude': 'FLOAT NULL',
+        'SPEED': 'DECIMAL(4,2) NULL',
+        'HEADING': 'INT NULL',
+        'TAG': 'CHAR(1) NULL',
+        'HEIGHT': 'INT NULL',
+        'Laser_Status': 'VARCHAR(10) NULL',
+        'LED_Status': 'VARCHAR(10) NULL',
+        'ToF_Dist1_cm': 'INT NULL',
+        'ToF_Dist2_cm': 'INT NULL',
+        'rtk_gap_ms': 'INT NULL',
+        'video_offset_ms': 'INT NULL',
+        'site_name': 'VARCHAR(255) NULL',
+        'image_data': 'VARBINARY(MAX) NULL',
+    }
+    for name, ddl in columns.items():
+        cursor.execute(
+            f"IF COL_LENGTH('dbo.Measurements', '{name}') IS NULL "
+            f"ALTER TABLE dbo.Measurements ADD [{name}] {ddl}"
+        )
+
+
+# 把帶正負號的十進位度數轉回 Trees.[LATITUDE N/S] / [LONGITUDE E/W] 需要的字串格式
+def _coord_to_str(value, positive_letter, negative_letter):
+    if value is None:
+        return None
+    letter = positive_letter if value >= 0 else negative_letter
+    return f'{abs(value):.7f}{letter}'
+
+
+def save_time_synced_measurements(records: list, site_name) -> dict:
+    """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
+    整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
+    （用第一筆有 GPS 座標的資料當樹的位置），所有秒數的量測都指向同一個 Tree_ID。
+
+    dbh／biomass／carbon_absorpation 目前還沒有影像追蹤與樹徑換算可用，先寫入 0
+    佔位，status 固定 'Pending'（等後台審核，不會出現在地圖/首頁），
+    等 tracker／樹徑計算完成後，再依 record_id 回頭 UPDATE 這幾欄的真實數值。
+    """
+    if not records:
+        return {'status': 'success', 'inserted': 0, 'tree_id': None}
+
+    conn = get_db_connection()
+    if conn is None:
+        return {'status': 'error', 'message': '資料庫連線失敗'}
+    try:
+        cursor = conn.cursor()
+        _ensure_measurement_columns(cursor)
+
+        first_gps = next(
+            (r for r in records if r['latitude'] is not None and r['longitude'] is not None),
+            None
+        )
+        lat_str = _coord_to_str(first_gps['latitude'], 'N', 'S') if first_gps else None
+        lon_str = _coord_to_str(first_gps['longitude'], 'E', 'W') if first_gps else None
+        tree_id = _get_or_create_tree_id(cursor, None, None, lat_str, lon_str)
+
+        for r in records:
+            recorded_at = r['recorded_at']
+            cursor.execute(
+                'INSERT INTO Measurements ('
+                'Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], '
+                'latitude, longitude, SPEED, HEADING, TAG, HEIGHT, '
+                'Laser_Status, LED_Status, ToF_Dist1_cm, ToF_Dist2_cm, '
+                'rtk_gap_ms, video_offset_ms, site_name, image_data'
+                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                tree_id, 0, 0, 0, 'Pending',
+                recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
+                r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
+                r['rtk_tag'], r['rtk_height_m'],
+                r['laser_status'], r['led_status'],
+                int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
+                r['rtk_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
+            )
+        conn.commit()
+        return {'status': 'success', 'inserted': len(records), 'tree_id': tree_id}
+    except Exception as e:
+        conn.rollback()
+        return {'status': 'error', 'message': f'寫入 Measurements 失敗：{str(e)}'}
+    finally:
+        conn.close()
+
+
+# ── 時間對齊管線寫入（Arduino/RTK 對齊後的原始感測器資料，舊版暫存表，目前未使用）
 # 負責人：蔡宗倫
 # 開發日期：2026/08/22
 def save_sensor_sync_records(records: list) -> dict:

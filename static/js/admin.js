@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json().catch(() => ({}));
 
         if (res.ok) {
-            alert(`時間對齊完成，共 ${data.total_count} 筆，其中 ${data.matched_gps_count} 筆配對到 GPS 座標`);
+            alert(`時間對齊完成，共 ${data.total_count} 筆，其中 ${data.matched_gps_count} 筆配對到 GPS 座標，已寫入 ${data.inserted} 筆量測資料（案場：${data.site_name || '未提供影片'}）`);
             form.reset();
             resetFilePills();
         } else {
