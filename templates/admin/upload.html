@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}資料上傳{% endblock %}
+
+{% block content %}
+<nav class="admin-tabs">
+    <a href="{{ url_for('admin.dashboard') }}" class="admin-tab">檢視資料表</a>
+    <a href="{{ url_for('admin.manage_page') }}" class="admin-tab">數據管理維護</a>
+    <a href="{{ url_for('admin.upload_page') }}" class="admin-tab admin-tab-active">資料上傳</a>
+</nav>
+
+<div class="upload-page">
+    <div class="upload-box">
+        <div class="upload-header">
+            <h1>資料上傳</h1>
+        </div>
+        <form id="upload-form" class="upload-form" novalidate>
+            <label class="file-pill">
+                <span class="file-pill-text" data-placeholder="RTK">RTK</span>
+                <input type="file" id="rtk-file" name="rtk_file" class="file-pill-input">
+            </label>
+            <label class="file-pill">
+                <span class="file-pill-text" data-placeholder="Arduino">Arduino</span>
+                <input type="file" id="arduino-file" name="arduino_file" class="file-pill-input">
+            </label>
+            <label class="file-pill">
+                <span class="file-pill-text" data-placeholder="MP4">MP4</span>
+                <input type="file" id="mp4-file" name="mp4_file" class="file-pill-input" accept="video/mp4">
+            </label>
+            <div class="upload-actions">
+                <button type="submit" class="upload-btn">上傳辨識</button>
+                <button type="button" class="cancel-btn" id="upload-cancel-btn">取消</button>
+            </div>
+            <p id="upload-error" class="login-error" hidden></p>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}" defer></script>
+{% endblock %}

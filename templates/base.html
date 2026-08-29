@@ -14,14 +14,24 @@
         <a href="{{ url_for('pages.index') }}" class="site-title">樹木監測網站</a>
     </div>
     <nav class="nav-center">
-        <span class="nav-item">網站消息 ▾</span>
-        <span class="nav-item">校園中的樹木 ▾</span>
-        <span class="nav-item">固碳知識</span>
-        <span class="nav-item">團隊介紹</span>
+        <a href="{{ url_for('pages.index') }}" class="nav-item">首頁</a>
+        <a href="{{ url_for('pages.map_page') }}" class="nav-item">數位地圖</a>
+        <div class="nav-item nav-dropdown">
+            <button type="button" class="nav-dropdown-toggle">系統管理 ▾</button>
+            <div class="nav-dropdown-menu" hidden>
+                <a href="{{ url_for('admin.dashboard') }}">檢視資料表</a>
+                <a href="{{ url_for('admin.manage_page') }}">數據管理與維護</a>
+            </div>
+        </div>
+        <span class="nav-item">關於我們</span>
     </nav>
     <div class="nav-right">
-        <a href="{{ url_for('admin.login_page') }}" class="nav-link">後台登入</a>
-        <a href="#" class="nav-link">網站導覽</a>
+        {% if session.admin_id %}
+            <span class="nav-item">{{ session.username }}</span>
+            <button type="button" id="logout-btn" class="nav-link logout-btn">登出</button>
+        {% else %}
+            <a href="{{ url_for('admin.login_page') }}" class="nav-link">後台登入</a>
+        {% endif %}
     </div>
 </header>
 
@@ -29,6 +39,11 @@
 {% block content %}{% endblock %}
 </main>
 
+<footer class="site-footer">
+    <p>@ 2026 淡江大學樹木碳匯監測系統</p>
+</footer>
+
+<script src="{{ url_for('static', filename='js/nav.js') }}" defer></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

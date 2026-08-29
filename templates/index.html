@@ -2,4 +2,62 @@
 {% block title %}樹木監測網站{% endblock %}
 
 {% block content %}
+<div class="index-page">
+  <p class="banner-notice">本系統統計範圍為淡江大學校園樹木</p>
+
+  <section class="hero-section">
+    <h1 class="hero-title">樹木監測網站</h1>
+    <p class="hero-subtitle">淡江大學校園固碳監測系統</p>
+  </section>
+
+  <section class="stats-section">
+    <h2 class="stats-heading">淡江大學校內資訊</h2>
+    <div class="stats-circles">
+      <div class="stat-circle">
+        <span class="stat-label">測量樹木總棵數</span>
+        <span class="stat-value" id="totalTrees">...</span>
+      </div>
+      <div class="stat-circle">
+        <span class="stat-label">總固碳量</span>
+        <span class="stat-value" id="totalCarbon">...</span>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const totalTreesEl = document.getElementById('totalTrees');
+  const totalCarbonEl = document.getElementById('totalCarbon');
+
+  const showFallback = () => {
+    totalTreesEl.textContent = '—';
+    totalCarbonEl.textContent = '—';
+  };
+
+  const loadStats = async () => {
+    let res;
+    try {
+      res = await fetch('/api/stats');
+    } catch (err) {
+      showFallback();
+      return;
+    }
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.success) {
+      showFallback();
+      return;
+    }
+
+    totalTreesEl.textContent = data.total_trees;
+    totalCarbonEl.textContent = data.total_carbon;
+  };
+
+  loadStats();
+});
+</script>
 {% endblock %}

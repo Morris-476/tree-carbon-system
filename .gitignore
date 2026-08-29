@@ -39,3 +39,7 @@ cloudflared*
 # 系統檔
 .DS_Store
 Thumbs.db
+# 忽略硬體測量出來的龐大原始數據與處理後的檔案
+data/
+# 忽略系統的環境變數設定檔 (保護資料庫密碼或 API 金鑰)
+.env

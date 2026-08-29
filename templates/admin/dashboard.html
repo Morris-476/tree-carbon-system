@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}檢視資料表{% endblock %}
+
+{% block content %}
+<nav class="admin-tabs">
+    <a href="{{ url_for('admin.dashboard') }}" class="admin-tab admin-tab-active">檢視資料表</a>
+    <a href="{{ url_for('admin.manage_page') }}" class="admin-tab">數據管理維護</a>
+    <a href="{{ url_for('admin.upload_page') }}" class="admin-tab">資料上傳</a>
+</nav>
+
+<div class="dashboard-page">
+    <h1>檢視表資料</h1>
+    <table class="dashboard-table">
+        <thead>
+            <tr>
+                <th>編號</th>
+                <th>樹種</th>
+                <th>樹徑</th>
+                <th>拍攝地</th>
+                <th>經緯度</th>
+                <th>固碳量</th>
+                <th>圖片</th>
+            </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>
+{% endblock %}

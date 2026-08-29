@@ -12,3 +12,9 @@ pages_bp = Blueprint('pages', __name__)
 @pages_bp.route('/')
 def index():
     return render_template('index.html')
+
+
+#陳政雍 8/18新增Map功能
+@pages_bp.route('/map')
+def map_page():
+    return render_template('map.html')
