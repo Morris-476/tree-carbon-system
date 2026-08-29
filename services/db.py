@@ -144,6 +144,7 @@ def get_tree_map_data():
         cursor.execute("""
             SELECT
                 紀錄編號           AS record_id,
+                Tree_ID            AS tree_id,
                 樹木種類           AS species_name,
                 樹徑cm             AS dbh,
                 固碳量             AS carbon_absorpation,
