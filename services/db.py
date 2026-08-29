@@ -336,16 +336,31 @@ def get_all_trees_admin():
 
 
 # 負責人：陳政雍 8/27 完成確認／刪除功能：實作 update_tree_status()、delete_tree()
-def update_tree_status(tree_id: int, new_status: str) -> bool:
-    """後台：更新 Measurements 審核狀態。回傳 True 表示更新成功（有找到該筆）。"""
+# 張恆輔 8/29修正：dbh／carbon 參數在之前的合併中被覆蓋掉了，導致
+# routes/admin.py 呼叫時傳入 dbh=/carbon= 會直接 TypeError（確認按鈕壞掉）。
+# dbh／carbon 可選（雙擊編輯後跟著確認一起送），只更新有帶值的欄位。
+def update_tree_status(tree_id: int, new_status: str, dbh=None, carbon=None) -> bool:
+    """後台：更新 Measurements 審核狀態，可一併更新 dbh／carbon_absorpation。
+    回傳 True 表示更新成功（有找到該筆）。
+    """
+    fields = ['status = ?']
+    params = [new_status]
+    if dbh is not None:
+        fields.append('dbh = ?')
+        params.append(dbh)
+    if carbon is not None:
+        fields.append('carbon_absorpation = ?')
+        params.append(carbon)
+    params.append(tree_id)
+
     conn = get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE Measurements SET status = ? WHERE record_id = ?",
-            new_status, tree_id
+            f"UPDATE Measurements SET {', '.join(fields)} WHERE record_id = ?",
+            params
         )
         conn.commit()
         return cursor.rowcount > 0
