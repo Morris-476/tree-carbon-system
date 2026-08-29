@@ -5,6 +5,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const tbody = table.querySelector('tbody');
 
+    const modal = document.getElementById('dashboard-img-modal');
+    const modalImg = document.getElementById('dashboard-img-modal-img');
+    const modalPlaceholder = document.getElementById('dashboard-img-modal-placeholder');
+    const modalCloseBtn = document.getElementById('dashboard-img-modal-close');
+
+    const closeModal = () => {
+        modal.hidden = true;
+        modalImg.hidden = true;
+        modalImg.removeAttribute('src');
+        modalPlaceholder.hidden = false;
+    };
+
+    const openModal = (imgSrc) => {
+        modalPlaceholder.hidden = false;
+        modalImg.hidden = true;
+        if (imgSrc) {
+            modalImg.onload = () => {
+                modalPlaceholder.hidden = true;
+                modalImg.hidden = false;
+            };
+            modalImg.onerror = () => {
+                modalImg.hidden = true;
+                modalPlaceholder.hidden = false;
+            };
+            modalImg.src = imgSrc;
+        }
+        modal.hidden = false;
+    };
+
+    modalCloseBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+    });
+
     const showError = (message) => {
         console.error(message);
         let errorEl = document.querySelector('.dashboard-error');
@@ -34,9 +68,9 @@ document.addEventListener('DOMContentLoaded', () => {
         dbhCell.textContent = isEmpty(tree.dbh) ? '尚無資料' : `${tree.dbh} cm`;
         tr.appendChild(dbhCell);
 
-        const siteCell = document.createElement('td');
-        siteCell.textContent = formatValue(tree.site_name);
-        tr.appendChild(siteCell);
+        const carbonCell = document.createElement('td');
+        carbonCell.textContent = isEmpty(tree.carbon_absorpation) ? '尚無資料' : `${tree.carbon_absorpation} kg`;
+        tr.appendChild(carbonCell);
 
         const coordCell = document.createElement('td');
         coordCell.textContent = (isEmpty(tree.latitude) || isEmpty(tree.longitude))
@@ -44,19 +78,17 @@ document.addEventListener('DOMContentLoaded', () => {
             : `${tree.latitude}, ${tree.longitude}`;
         tr.appendChild(coordCell);
 
-        const carbonCell = document.createElement('td');
-        carbonCell.textContent = isEmpty(tree.carbon_absorpation) ? '尚無資料' : `${tree.carbon_absorpation} kg`;
-        tr.appendChild(carbonCell);
+        const siteCell = document.createElement('td');
+        siteCell.textContent = formatValue(tree.site_name);
+        tr.appendChild(siteCell);
 
         const imgCell = document.createElement('td');
-        if (tree.img) {
-            const img = document.createElement('img');
-            img.src = tree.img;
-            img.alt = tree.species_name || '';
-            imgCell.appendChild(img);
-        } else {
-            imgCell.textContent = '尚無資料';
-        }
+        const imgThumb = document.createElement('button');
+        imgThumb.type = 'button';
+        imgThumb.className = 'img-thumb';
+        imgThumb.setAttribute('aria-label', '查看照片');
+        imgThumb.addEventListener('click', () => openModal(tree.img));
+        imgCell.appendChild(imgThumb);
         tr.appendChild(imgCell);
 
         return tr;

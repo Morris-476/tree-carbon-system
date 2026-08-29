@@ -313,6 +313,15 @@ a {
     font-size: 0.95rem;
 }
 
+.dashboard-page {
+    padding: 24px 20px;
+}
+
+.dashboard-page h1 {
+    margin: 0 0 16px 0;
+    font-size: 1.2rem;
+}
+
 /* 負責人：陳政雍 8/27 新增 .dashboard-table 樣式（沿用 .manage-table）*/
 .dashboard-table {
     width: 100%;
