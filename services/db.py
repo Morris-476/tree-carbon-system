@@ -102,6 +102,7 @@ def _get_or_create_tree_id(cursor, track_id, species_id=None,
     return cursor.fetchone()[0]
 
 
+# 陳政雍 8/29修正：改用 main 版本，修復檢視資料表查詢失敗問題
 # 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
 # ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
