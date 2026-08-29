@@ -175,7 +175,7 @@ def get_tree_list():
     raise NotImplementedError("此函式尚未實作")
 
 
-# ── 網頁上傳寫入（status='confirmed'，直接公開）──────────────────
+# ── 網頁上傳寫入（status='Approved'，直接公開）──────────────────
 def save_tree_record(species, dbh, carbon, img_bin):
     """儲存網頁上傳的辨識結果（無 GPS 座標）。"""
     # TODO: 待實作 — 負責人：____
@@ -280,6 +280,7 @@ def _parse_coord(raw):
 
 
 # ── 後台管理：樹木清單（僅 pending）───────────────────────────────
+# 張恆輔 8/29修正：補回 recorded_at（JOIN Measurements 取得 DATE/TIME）
 # v_AdminPendingQueue 已改為 LEFT JOIN 並補上緯度／經度欄位，
 # 直接查這張 view 即可（view 內部已經用 WHERE m.status = N'Pending' 篩選過）。
 def get_all_trees_admin():
@@ -291,22 +292,28 @@ def get_all_trees_admin():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT
-                紀錄編號     AS id,
-                Tree_ID      AS tree_id,
-                樹木種類     AS species,
-                樹徑cm       AS dbh,
-                固碳量       AS carbon,
-                巡檢案場     AS site,
-                緯度         AS lat_raw,
-                經度         AS lng_raw,
-                樹木照片二進位 AS image_bin
-            FROM v_AdminPendingQueue
+                v.紀錄編號     AS id,
+                v.Tree_ID      AS tree_id,
+                v.樹木種類     AS species,
+                v.樹徑cm       AS dbh,
+                v.固碳量       AS carbon,
+                v.巡檢案場     AS site,
+                v.緯度         AS lat_raw,
+                v.經度         AS lng_raw,
+                v.樹木照片二進位 AS image_bin,
+                m.[DATE]       AS measure_date,
+                m.[TIME]       AS measure_time
+            FROM v_AdminPendingQueue v
+            JOIN Measurements m ON m.record_id = v.紀錄編號
         """)
         columns = [col[0] for col in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
         trees = []
         for row in rows:
+            recorded_at = ' '.join(
+                part for part in (row['measure_date'], row['measure_time']) if part
+            )
             trees.append({
                 'id': row['id'],
                 'tree_id': row['tree_id'],
@@ -317,6 +324,7 @@ def get_all_trees_admin():
                 'lng': _parse_coord(row['lng_raw']),
                 'site': row['site'],
                 'status': 'pending',
+                'recorded_at': recorded_at or None,
                 'img': _img_bin_to_data_uri(row['image_bin']),
             })
         return trees
