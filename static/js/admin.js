@@ -1,3 +1,4 @@
+// 陳信睿 8/28修改
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('login-form');
     if (!form) return;
@@ -87,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json().catch(() => ({}));
 
         if (res.ok) {
-            alert('上傳成功，已送交管理員審核');
+            alert(`時間對齊完成，共 ${data.total_count} 筆，其中 ${data.matched_gps_count} 筆配對到 GPS 座標`);
             form.reset();
             resetFilePills();
         } else {
@@ -136,9 +137,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
                 .join('');
 
+            // 張恆輔 8/29修正：補回「編號」欄（原本被誤換成 tree_id），Tree_ID 改成獨立一欄
             tr.innerHTML = `
                 <td>${tree.id}</td>
+                <td>${tree.tree_id}</td>
                 <td><select class="species-select">${speciesOptionsHtml}</select></td>
+                <td>${tree.dbh}</td>
                 <td>${tree.carbon}</td>
                 <td>${tree.lat}, ${tree.lng}</td>
                 <td>${tree.site}</td>

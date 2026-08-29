@@ -18,11 +18,7 @@ ALLOWED_STATUSES = frozenset({'Pending', 'Approved'})
 # ── 登入保護裝飾器 ────────────────────────────────────────────────
 # 陳政雍 8/1修改
 def login_required(f):
-    """
-    套在需要登入的路由上。
-    - API 路由（/api/ 開頭或 Accept: application/json）回傳 401 JSON
-    - 頁面路由轉址到登入頁
-    """
+    """套在需要登入的路由上，未登入時 API 回 401、頁面轉址登入頁。"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'admin_id' not in session:
@@ -73,10 +69,7 @@ def manage_page():
 # 陳政雍 8/1修改
 @admin_bp.route('/api/admin/login', methods=['POST'])
 def api_login():
-    """
-    接受 JSON 格式的 {username, password}，驗證成功後建立 session。
-    帳號或密碼錯誤時統一回傳 401，不區分是帳號不存在還是密碼錯誤。
-    """
+    """接受 JSON 格式的 {username, password}，驗證成功後建立 session。"""
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
     password = (data.get('password') or '').strip()
@@ -116,12 +109,22 @@ def api_get_trees():
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['PUT'])
 @login_required
 def api_update_tree(tree_id: int):
-    """status 只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。"""
+    """status 必填，只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。
+    dbh、carbon 可選（雙擊編輯後跟著確認一起送），型別錯誤回傳 400。
+    """
     data = request.get_json(silent=True) or {}
     new_status = data.get('status')
     if new_status not in ALLOWED_STATUSES:
         return jsonify({'error': 'status 格式錯誤'}), 400
-    if not db_service.update_tree_status(tree_id, new_status):
+
+    dbh = data.get('dbh')
+    carbon = data.get('carbon')
+    if dbh is not None and not isinstance(dbh, (int, float)):
+        return jsonify({'error': 'dbh 格式錯誤'}), 400
+    if carbon is not None and not isinstance(carbon, (int, float)):
+        return jsonify({'error': 'carbon 格式錯誤'}), 400
+
+    if not db_service.update_tree_status(tree_id, new_status, dbh=dbh, carbon=carbon):
         return jsonify({'error': '更新失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
 
