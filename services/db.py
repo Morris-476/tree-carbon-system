@@ -278,6 +278,15 @@ def _ensure_measurement_columns(cursor):
         )
 
 
+# 補 Trees 缺的 site_id 欄位：_get_or_create_tree_id() 的 INSERT 語法裡有
+# 用到 site_id，但實際資料庫的 Trees 表沒有這欄，會噴 Invalid column name 'site_id'。
+def _ensure_tree_columns(cursor):
+    cursor.execute(
+        "IF COL_LENGTH('dbo.Trees', 'site_id') IS NULL "
+        "ALTER TABLE dbo.Trees ADD site_id INT NULL"
+    )
+
+
 # 把帶正負號的十進位度數轉回 Trees.[LATITUDE N/S] / [LONGITUDE E/W] 需要的字串格式
 def _coord_to_str(value, positive_letter, negative_letter):
     if value is None:
@@ -304,6 +313,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
     try:
         cursor = conn.cursor()
         _ensure_measurement_columns(cursor)
+        _ensure_tree_columns(cursor)
 
         first_gps = next(
             (r for r in records if r['latitude'] is not None and r['longitude'] is not None),
