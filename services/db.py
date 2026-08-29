@@ -81,6 +81,7 @@ def get_tree_map_data():
         cursor.execute("""
             SELECT
                 record_id,
+                Tree_ID AS tree_id,
                 species_name,
                 dbh,
                 carbon_absorpation,

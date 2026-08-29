@@ -60,6 +60,10 @@ document.addEventListener('DOMContentLoaded', () => {
         idCell.textContent = formatValue(tree.record_id);
         tr.appendChild(idCell);
 
+        const treeIdCell = document.createElement('td');
+        treeIdCell.textContent = formatValue(tree.tree_id);
+        tr.appendChild(treeIdCell);
+
         const speciesCell = document.createElement('td');
         speciesCell.textContent = formatValue(tree.species_name);
         tr.appendChild(speciesCell);
