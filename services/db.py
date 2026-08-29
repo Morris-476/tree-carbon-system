@@ -1,8 +1,9 @@
-# 陳信睿 8/28 修改
+# 陳信睿 8/29 修改
 """
 services/db.py
 所有 SQL Server 查詢邏輯的唯一入口。
-資料庫正規化為五張表：Sites、Species_Ref、Trees、Measurements、Admins。
+資料庫正規化為四張表：Species_Ref、Trees、Measurements、Admins。
+site_name 已併入 Measurements（每筆量測各自記錄巡檢案場，不再另外開 Sites 表）。
 連線憑證一律從環境變數讀取，不寫死任何帳號密碼。
 """
 import base64
@@ -81,7 +82,7 @@ def _get_or_create_species(cursor, species_name: str) -> int:
 # 絕對不可以省略 tracker_id 或用固定值頂替，否則所有偵測到的樹都會被誤綁成
 # 同一個 Tree_ID（這正是目前資料庫裡發生的問題）。
 def _get_or_create_tree_id(cursor, track_id, species_id=None,
-                            lat=None, lon=None, site_id=None) -> int:
+                            lat=None, lon=None) -> int:
     """依 tracker_id 找出（或新增）對應的 Tree_ID。
     track_id 為 None 時視為沒有追蹤資訊可比對，一律新增一筆 Trees 記錄。
     """
@@ -95,9 +96,9 @@ def _get_or_create_tree_id(cursor, track_id, species_id=None,
         track_id = cursor.fetchone()[0]
 
     cursor.execute(
-        "INSERT INTO Trees (site_id, tracker_id, species_id, [LATITUDE N/S], [LONGITUDE E/W]) "
-        "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?, ?, ?)",
-        site_id, track_id, species_id, lat, lon
+        "INSERT INTO Trees (tracker_id, species_id, [LATITUDE N/S], [LONGITUDE E/W]) "
+        "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?, ?)",
+        track_id, species_id, lat, lon
     )
     return cursor.fetchone()[0]
 
