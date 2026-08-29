@@ -102,6 +102,36 @@ def _get_or_create_tree_id(cursor, track_id, species_id=None,
     return cursor.fetchone()[0]
 
 
+# 這個 BUG 的核心修法：Trees.tracker_id 為 NOT NULL，代表每一棵「偵測到的樹」
+# 都必須有自己專屬的 tracker_id（ByteTrack 給的追蹤編號），才能各自對應到
+# 獨立的 Tree_ID。同一個 tracker_id 出現第二次，代表同一棵樹的另一次量測，
+# 才共用既有 Tree_ID；tracker_id 是全新的，或呼叫端沒有追蹤器可用（例如桌面
+# CLI 單張照片辨識），一律視為新樹、INSERT 一筆新的 Trees 記錄取得新 Tree_ID。
+# 絕對不可以省略 tracker_id 或用固定值頂替，否則所有偵測到的樹都會被誤綁成
+# 同一個 Tree_ID（這正是目前資料庫裡發生的問題）。
+def _get_or_create_tree_id(cursor, track_id, species_id=None,
+                            lat=None, lon=None, site_id=None) -> int:
+    """依 tracker_id 找出（或新增）對應的 Tree_ID。
+    track_id 為 None 時視為沒有追蹤資訊可比對，一律新增一筆 Trees 記錄。
+    """
+    if track_id is not None:
+        cursor.execute("SELECT Tree_ID FROM Trees WHERE tracker_id = ?", track_id)
+        row = cursor.fetchone()
+        if row is not None:
+            return row[0]
+    else:
+        cursor.execute("SELECT ISNULL(MAX(tracker_id), 0) + 1 FROM Trees")
+        track_id = cursor.fetchone()[0]
+
+    cursor.execute(
+        "INSERT INTO Trees (site_id, tracker_id, species_id, [LATITUDE N/S], [LONGITUDE E/W]) "
+        "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?, ?, ?)",
+        site_id, track_id, species_id, lat, lon
+    )
+    return cursor.fetchone()[0]
+
+
+# 陳政雍 8/29修正：改用 main 版本，修復檢視資料表查詢失敗問題
 # 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
 # ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
 def get_tree_map_data():
