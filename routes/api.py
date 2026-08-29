@@ -16,7 +16,8 @@ api_bp = Blueprint('api', __name__)
 
 # 負責人：蔡宗倫
 # 開發日期：2026/08/24
-# 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並回傳結果
+# 2026/08/29 修改：對齊完成後改為連同影片截圖一起寫入 dbo.Measurements
+# 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並寫入資料庫
 @api_bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
@@ -42,7 +43,7 @@ def api_upload():
         video_path = os.path.join(upload_dir, mp4_file.filename)
         mp4_file.save(video_path)
 
-    result = data_pipeline.run_sensor_time_sync(
+    result = data_pipeline.run_upload_and_save(
         rtk_file_path=rtk_path,
         csv_file_path=arduino_path,
         video_path=video_path,
@@ -51,19 +52,17 @@ def api_upload():
     if result['status'] != 'success':
         return jsonify({'error': result['message']}), 400
 
-    records = [
-        {**r, 'recorded_at': r['recorded_at'].strftime('%Y-%m-%d %H:%M:%S')}
-        for r in result['records']
-    ]
     video_start_at = result['video_start_at']
 
     return jsonify({
         'success': True,
         'total_count': result['total_count'],
         'matched_gps_count': result['matched_gps_count'],
+        'inserted': result['inserted'],
+        'tree_id': result['tree_id'],
+        'site_name': result['site_name'],
         'video_start_at': video_start_at.strftime('%Y-%m-%d %H:%M:%S') if video_start_at else None,
         'video_filename': result['video_filename'],
-        'records': records,
     }), 200
 
 

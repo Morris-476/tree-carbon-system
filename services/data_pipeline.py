@@ -25,14 +25,39 @@ services/data_pipeline.py
 
 ⚠️  2026/08/24 修改：run_sensor_time_sync 改呼叫純運算版本 merge_data.align_sensor_data()，
     不再寫入資料庫，供 /api/upload 上傳流程直接呼叫並回傳對齊結果。
+
+⚠️  2026/08/29 修改：新增 run_upload_and_save()，把對齊結果連同影片截圖寫入 dbo.Measurements。
+    對齊運算本身（merge_data.align_sensor_data）完全沒有更動。
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Optional
 
+import cv2
+
 from services import merge_data
+from services import db as db_service
 import config
+
+
+def _extract_frame_jpeg(video_path: str, offset_ms: int):
+    """從影片抓 offset_ms 那個時間點最接近的一格，編碼成 JPEG bytes。
+    抓不到（超出影片長度、影片壞掉等）時回傳 None，不拋例外中斷整批處理。
+    """
+    cap = cv2.VideoCapture(video_path)
+    try:
+        if not cap.isOpened():
+            return None
+        cap.set(cv2.CAP_PROP_POS_MSEC, max(offset_ms, 0))
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return None
+        ok, buf = cv2.imencode('.jpg', frame)
+        return buf.tobytes() if ok else None
+    finally:
+        cap.release()
 
 
 def run_sensor_time_sync(
@@ -65,6 +90,60 @@ def run_sensor_time_sync(
         video_start_at=video_start_at,
         max_gap_seconds=max_rtk_gap_seconds,
     )
+
+
+def run_upload_and_save(
+    rtk_file_path: str,
+    csv_file_path: str,
+    video_path: Optional[str] = None,
+    video_start_at: Optional[datetime] = None,
+    max_rtk_gap_seconds: int = 3,
+) -> dict:
+    """
+    資料上傳頁的完整流程：時間對齊 → 每筆抓對應時間點的影片截圖 → 寫入 dbo.Measurements。
+    對齊邏輯直接呼叫 align_sensor_data()，完全沒有更動；這裡只負責截圖與寫入資料庫。
+
+    site_name 自動取影片檔名（去掉副檔名），例如 IMG_4631.MOV -> "IMG_4631"。
+    沒有上傳影片時，site_name 為 None、每筆的 image_data 也是 None（不影響對齊與寫入）。
+
+    Args:
+        rtk_file_path:        RTK CSV 路徑
+        csv_file_path:        Arduino(ToF) CSV 路徑
+        video_path:            影片路徑；有給的話才會截圖
+        video_start_at:        影片第 0 影格的真實時間，未提供時由 merge_data 自動推算
+        max_rtk_gap_seconds:   RTK 與 Arduino 紀錄的最大容忍時間差（秒）
+
+    Returns:
+        dict：對齊失敗時同 align_sensor_data() 的錯誤格式；
+        成功時額外含 inserted（實際寫入 Measurements 筆數）、tree_id、site_name。
+    """
+    result = merge_data.align_sensor_data(
+        arduino_path=csv_file_path,
+        rtk_path=rtk_file_path,
+        video_filename=video_path,
+        video_start_at=video_start_at,
+        max_gap_seconds=max_rtk_gap_seconds,
+    )
+    if result['status'] != 'success':
+        return result
+
+    site_name = None
+    if video_path:
+        site_name = os.path.splitext(os.path.basename(video_path))[0]
+        for record in result['records']:
+            record['image_data'] = _extract_frame_jpeg(video_path, record['video_offset_ms'])
+    else:
+        for record in result['records']:
+            record['image_data'] = None
+
+    save_result = db_service.save_time_synced_measurements(result['records'], site_name)
+    if save_result['status'] != 'success':
+        return {'status': 'error', 'message': save_result['message']}
+
+    result['inserted'] = save_result['inserted']
+    result['tree_id'] = save_result['tree_id']
+    result['site_name'] = site_name
+    return result
 
 
 def process_upload(
