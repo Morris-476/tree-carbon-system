@@ -287,6 +287,16 @@ def _ensure_tree_columns(cursor):
     )
 
 
+# 清掉不再使用的舊欄位：video_fps 原本規劃要用來把 video_offset_ms 換算成
+# 實際影格編號，但全專案沒有任何程式碼在寫入或讀取，一直是 NULL，故移除。
+# 欄位已經不在時會直接跳過，可安全重複執行。
+def _drop_unused_measurement_columns(cursor):
+    cursor.execute(
+        "IF COL_LENGTH('dbo.Measurements', 'video_fps') IS NOT NULL "
+        "ALTER TABLE dbo.Measurements DROP COLUMN video_fps"
+    )
+
+
 # 把帶正負號的十進位度數轉回 Trees.[LATITUDE N/S] / [LONGITUDE E/W] 需要的字串格式
 def _coord_to_str(value, positive_letter, negative_letter):
     if value is None:
@@ -314,6 +324,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
         cursor = conn.cursor()
         _ensure_measurement_columns(cursor)
         _ensure_tree_columns(cursor)
+        _drop_unused_measurement_columns(cursor)
 
         first_gps = next(
             (r for r in records if r['latitude'] is not None and r['longitude'] is not None),
