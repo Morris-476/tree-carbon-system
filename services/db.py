@@ -74,35 +74,10 @@ def _get_or_create_species(cursor, species_name: str) -> int:
     return cursor.fetchone()[0]
 
 
-# 這個 BUG 的核心修法：Trees.tracker_id 為 NOT NULL，代表每一棵「偵測到的樹」
-# 都必須有自己專屬的 tracker_id（ByteTrack 給的追蹤編號），才能各自對應到
-# 獨立的 Tree_ID。同一個 tracker_id 出現第二次，代表同一棵樹的另一次量測，
-# 才共用既有 Tree_ID；tracker_id 是全新的，或呼叫端沒有追蹤器可用（例如桌面
-# CLI 單張照片辨識），一律視為新樹、INSERT 一筆新的 Trees 記錄取得新 Tree_ID。
-# 絕對不可以省略 tracker_id 或用固定值頂替，否則所有偵測到的樹都會被誤綁成
-# 同一個 Tree_ID（這正是目前資料庫裡發生的問題）。
-def _get_or_create_tree_id(cursor, track_id, species_id=None,
-                            lat=None, lon=None) -> int:
-    """依 tracker_id 找出（或新增）對應的 Tree_ID。
-    track_id 為 None 時視為沒有追蹤資訊可比對，一律新增一筆 Trees 記錄。
-    """
-    if track_id is not None:
-        cursor.execute("SELECT Tree_ID FROM Trees WHERE tracker_id = ?", track_id)
-        row = cursor.fetchone()
-        if row is not None:
-            return row[0]
-    else:
-        cursor.execute("SELECT ISNULL(MAX(tracker_id), 0) + 1 FROM Trees")
-        track_id = cursor.fetchone()[0]
-
-    cursor.execute(
-        "INSERT INTO Trees (tracker_id, species_id, [LATITUDE N/S], [LONGITUDE E/W]) "
-        "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?, ?)",
-        track_id, species_id, lat, lon
-    )
-    return cursor.fetchone()[0]
-
-
+# 張恆輔 8/30修正：這個函式之前被重複定義了兩次（第二份多帶 site_id），
+# Python 會讓後面那份蓋掉前面，前面那份是永遠不會被呼叫到的死代碼，故刪除，
+# 只留下面這份完整版本。
+#
 # 這個 BUG 的核心修法：Trees.tracker_id 為 NOT NULL，代表每一棵「偵測到的樹」
 # 都必須有自己專屬的 tracker_id（ByteTrack 給的追蹤編號），才能各自對應到
 # 獨立的 Tree_ID。同一個 tracker_id 出現第二次，代表同一棵樹的另一次量測，
@@ -297,6 +272,23 @@ def _drop_unused_measurement_columns(cursor):
     )
 
 
+# 張恆輔 8/30修正：原本 _ensure_measurement_columns() 等 3 個 ALTER TABLE
+# 檢查會在每一次 /api/upload 請求都重新執行一次，雖然有 IF COL_LENGTH 防呆、
+# 不會重複出錯，但把 DDL 檢查放在熱路徑上不是好做法。改成只在這個process
+# 啟動後第一次呼叫時真正執行一次，之後的請求直接跳過。
+_schema_ready = False
+
+
+def _ensure_schema_ready(cursor):
+    global _schema_ready
+    if _schema_ready:
+        return
+    _ensure_measurement_columns(cursor)
+    _ensure_tree_columns(cursor)
+    _drop_unused_measurement_columns(cursor)
+    _schema_ready = True
+
+
 # 把帶正負號的十進位度數轉回 Trees.[LATITUDE N/S] / [LONGITUDE E/W] 需要的字串格式
 def _coord_to_str(value, positive_letter, negative_letter):
     if value is None:
@@ -322,9 +314,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
         return {'status': 'error', 'message': '資料庫連線失敗'}
     try:
         cursor = conn.cursor()
-        _ensure_measurement_columns(cursor)
-        _ensure_tree_columns(cursor)
-        _drop_unused_measurement_columns(cursor)
+        _ensure_schema_ready(cursor)
 
         first_gps = next(
             (r for r in records if r['latitude'] is not None and r['longitude'] is not None),
