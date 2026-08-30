@@ -39,6 +39,7 @@ import cv2
 
 from services import merge_data
 from services import db as db_service
+from services.analysis.tracker import TreeTracker
 import config
 
 
@@ -58,6 +59,55 @@ def _extract_frame_jpeg(video_path: str, offset_ms: int):
         return buf.tobytes() if ok else None
     finally:
         cap.release()
+
+
+# 張恆輔 8/30新增：只跑追蹤，先單獨驗證 track_id／pixel_width
+# 拿不拿得到，不做樹徑換算、固碳計算、也不寫資料庫。
+def run_tracking_only(video_path: str) -> dict:
+    """
+    對整支影片跑 TreeTracker，回傳每幀的 track_id／pixel_width。
+    TreeTracker 只建立一次、對每一幀依序呼叫 track_frame()，
+    符合 tracker.py 要求的 persist 語意（見該檔案開頭說明）。
+
+    Args:
+        video_path: 影片路徑（MP4 等 OpenCV 可開啟的格式）
+
+    Returns:
+        dict：
+          成功時 {'status': 'success', 'frame_count': int, 'fps': float, 'records': [...]}，
+          fps 是這支影片的幀率，用來把 records 裡的 frame 編號換算回毫秒
+          （offset_ms = frame / fps * 1000），供跟時間對齊後的資料配對。
+          records 為所有幀合併後的結果，格式：
+          [{"frame": int, "track_id": int, "pixel_width": int | None}, ...]
+          失敗時 {'status': 'error', 'message': str}
+    """
+    if not os.path.exists(video_path):
+        return {'status': 'error', 'message': f'找不到影片檔案：{video_path}'}
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        cap.release()
+        return {'status': 'error', 'message': f'無法開啟影片：{video_path}'}
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0
+    if fps <= 0:
+        cap.release()
+        return {'status': 'error', 'message': f'無法讀取影片幀率：{video_path}'}
+
+    tracker = TreeTracker()
+    records = []
+    frame_count = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            records.extend(tracker.track_frame(frame))
+            frame_count += 1
+    finally:
+        cap.release()
+
+    return {'status': 'success', 'frame_count': frame_count, 'fps': fps, 'records': records}
 
 
 def run_sensor_time_sync(
@@ -130,11 +180,41 @@ def run_upload_and_save(
     site_name = None
     if video_path:
         site_name = os.path.splitext(os.path.basename(video_path))[0]
+
+        # 張恆輔 8/30新增：追蹤要在這裡（跟時間對齊同一次請求）跑完，
+        # 因為 Measurements 沒有存影片路徑，等這次請求結束、之後沒辦法
+        # 再回頭找到這支影片來補跑追蹤。track_id／pixel_width 先存起來，
+        # 樹徑換算（IQR 篩選 + k值）留給後面的步驟處理，這裡不做。
+        tracking = run_tracking_only(video_path)
+        frame_lookup = {}
+        fps = None
+        if tracking['status'] == 'success':
+            fps = tracking['fps']
+            for det in tracking['records']:
+                frame_lookup.setdefault(det['frame'], []).append(det)
+
         for record in result['records']:
             record['image_data'] = _extract_frame_jpeg(video_path, record['video_offset_ms'])
+
+            if fps:
+                frame_idx = round(record['video_offset_ms'] / 1000 * fps)
+                detections = frame_lookup.get(frame_idx, [])
+            else:
+                detections = []
+
+            if detections:
+                # 同一幀出現多棵樹時，先取 pixel_width 最大（離鏡頭最近、最可信）的那個
+                best = max(detections, key=lambda d: d['pixel_width'] or 0)
+                record['track_id'] = best['track_id']
+                record['pixel_width'] = best['pixel_width']
+            else:
+                record['track_id'] = None
+                record['pixel_width'] = None
     else:
         for record in result['records']:
             record['image_data'] = None
+            record['track_id'] = None
+            record['pixel_width'] = None
 
     save_result = db_service.save_time_synced_measurements(result['records'], site_name)
     if save_result['status'] != 'success':

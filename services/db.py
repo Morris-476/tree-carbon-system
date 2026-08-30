@@ -245,6 +245,10 @@ def _ensure_measurement_columns(cursor):
         'video_offset_ms': 'INT NULL',
         'site_name': 'VARCHAR(255) NULL',
         'image_data': 'VARBINARY(MAX) NULL',
+        # 張恆輔 8/30新增：追蹤結果（同一支影片內的追蹤編號、像素寬度），
+        # 供之後 IQR 篩選＋樹徑換算使用，這裡先只負責存起來。
+        'track_id': 'INT NULL',
+        'pixel_width': 'INT NULL',
     }
     for name, ddl in columns.items():
         cursor.execute(
@@ -302,9 +306,12 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
     整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
     （用第一筆有 GPS 座標的資料當樹的位置），所有秒數的量測都指向同一個 Tree_ID。
 
-    dbh／biomass／carbon_absorpation 目前還沒有影像追蹤與樹徑換算可用，先寫入 0
+    track_id／pixel_width 是呼叫端（data_pipeline.run_upload_and_save）跑完
+    TreeTracker 後配對好的追蹤結果，沒配對到（或沒上傳影片）時為 None。
+
+    dbh／biomass／carbon_absorpation 還沒有 IQR 篩選＋樹徑換算可用，先寫入 0
     佔位，status 固定 'Pending'（等後台審核，不會出現在地圖/首頁），
-    等 tracker／樹徑計算完成後，再依 record_id 回頭 UPDATE 這幾欄的真實數值。
+    等樹徑計算完成後，再依 record_id 回頭 UPDATE 這幾欄的真實數值。
     """
     if not records:
         return {'status': 'success', 'inserted': 0, 'tree_id': None}
@@ -331,8 +338,9 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 'Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], '
                 'latitude, longitude, SPEED, HEADING, TAG, HEIGHT, '
                 'Laser_Status, LED_Status, ToF_Dist1_cm, ToF_Dist2_cm, '
-                'rtk_gap_ms, video_offset_ms, site_name, image_data'
-                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'rtk_gap_ms, video_offset_ms, site_name, image_data, '
+                'track_id, pixel_width'
+                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 tree_id, 0, 0, 0, 'Pending',
                 recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
                 r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
@@ -340,6 +348,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 r['laser_status'], r['led_status'],
                 int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
                 r['rtk_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
+                r.get('track_id'), r.get('pixel_width'),
             )
         conn.commit()
         return {'status': 'success', 'inserted': len(records), 'tree_id': tree_id}
