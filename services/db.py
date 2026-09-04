@@ -175,6 +175,29 @@ def get_stats():
         conn.close()
 
 
+# ── /measure 頁面查詢 ────────────────────────────────────────────
+# 張恆輔 9/4新增：只負責查詢 Species_Ref，不做任何固碳計算
+# 注意：carbon_fraction 欄位尚未加進 Species_Ref，此函式在該欄位補上前會查詢失敗
+def get_species_list():
+    """回傳所有樹種資料，供 /measure 頁面下拉選單與固碳計算使用。"""
+    conn = get_db_connection()
+    if conn is None:
+        return []
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT species_id, species_name, allo_param_a, allo_param_b, carbon_fraction "
+            "FROM Species_Ref ORDER BY species_name"
+        )
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    except Exception as e:
+        print(f"get_species_list 查詢失敗: {e}")
+        return []
+    finally:
+        conn.close()
+
+
 # ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
 def get_tree_list():
     """回傳樹木清單，供資料展示頁使用。"""
