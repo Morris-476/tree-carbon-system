@@ -11,7 +11,7 @@
 
 <header class="navbar">
     <div class="nav-left">
-        <a href="{{ url_for('pages.index') }}" class="site-title">樹木監測網站</a>
+        <a href="{{ url_for('pages.index') }}" class="site-title">樹木碳匯監測系統</a>
     </div>
     <nav class="nav-center">
         <a href="{{ url_for('pages.index') }}" class="nav-item">首頁</a>
@@ -23,7 +23,7 @@
                 <a href="{{ url_for('admin.manage_page') }}">數據管理與維護</a>
             </div>
         </div>
-        <span class="nav-item">關於我們</span>
+        <a href="{{ url_for('pages.measure') }}" class="nav-item">簡易固碳繪測</a>
     </nav>
     <div class="nav-right">
         {% if session.admin_id %}
