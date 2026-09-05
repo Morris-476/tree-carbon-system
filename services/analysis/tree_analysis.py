@@ -10,13 +10,15 @@ MAX_VALID_DIST = 800  # ToF 有效距離上限（cm）
 
 
 def load_measurements() -> pd.DataFrame:
-    """從 Measurements 資料表讀取原始感測器讀值（record_id/DATE/TIME/Laser_Status/ToF_Dist1_cm）。"""
+    """從 Measurements 資料表讀取原始感測器讀值
+    （record_id/DATE/TIME/Laser_Status/ToF_Dist1_cm/site_name/track_id）。"""
     conn = db_service.get_db_connection()
     if conn is None:
         raise RuntimeError("資料庫連線失敗，無法讀取 Measurements 資料")
     try:
         return pd.read_sql("""
-            SELECT [record_id], [DATE], [TIME], [Laser_Status], [ToF_Dist1_cm]
+            SELECT [record_id], [DATE], [TIME], [Laser_Status], [ToF_Dist1_cm],
+                   [site_name], [track_id]
             FROM Measurements
             ORDER BY [DATE], [TIME]
         """, conn)
@@ -45,13 +47,15 @@ def ensure_final_dist_column() -> None:
 
 def write_final_distances(result: pd.DataFrame) -> None:
     """把每群（每棵樹）去極端值後的平均距離寫回該群代表列的 Final_Dist_cm。
-    只更新 Final_Dist_cm 這個欄位，其餘欄位與其他原始列一律不動。
+    寫入前先把全表 Final_Dist_cm 清成 NULL，避免分群邏輯改變後，
+    不再是代表列的舊值殘留在資料庫裡變成過期的假資料。
     """
     conn = db_service.get_db_connection()
     if conn is None:
         raise RuntimeError("資料庫連線失敗，無法寫回 Final_Dist_cm")
     try:
         cursor = conn.cursor()
+        cursor.execute("UPDATE Measurements SET Final_Dist_cm = NULL")
         for _, row in result.iterrows():
             cursor.execute(
                 "UPDATE Measurements SET Final_Dist_cm = ? WHERE record_id = ?",
@@ -74,9 +78,26 @@ valid = df[
     (df['ToF_Dist1_cm'] <= MAX_VALID_DIST)
 ].copy().reset_index(drop=True)
 
-# 用時間間隔分群（同一棵樹的連續讀值）
-valid['gap'] = valid['DATETIME'].diff().dt.total_seconds().fillna(0) > GAP_SECONDS
-valid['tree_group'] = valid['gap'].cumsum()
+# 分群邏輯：
+#   - 該站點有 track_id（影片追蹤編號）資料時，代表是連續錄製（可能中途不停頓），
+#     ToF 讀值的時間間隔會失效，改以 track_id 分群 —— 每個非 NULL 的 track_id
+#     視為一棵樹，沒有偵測到樹幹（track_id 為 NULL）的影格直接排除，不算獨立的樹。
+#   - 該站點完全沒有 track_id 資料（舊式純 ToF 資料）時，才 fallback 用時間間隔
+#     （超過 GAP_SECONDS 秒視為換了一棵樹）分群，維持原本行為。
+def _assign_tree_key(site_df: pd.DataFrame) -> pd.DataFrame:
+    site_df = site_df.sort_values('DATETIME').reset_index(drop=True)
+    if site_df['track_id'].notna().any():
+        site_df = site_df[site_df['track_id'].notna()].copy()
+        site_df['tree_key'] = list(zip(site_df['site_name'], site_df['track_id']))
+    else:
+        gap = site_df['DATETIME'].diff().dt.total_seconds().fillna(0) > GAP_SECONDS
+        site_df['tree_key'] = list(zip(site_df['site_name'], gap.cumsum()))
+    return site_df
+
+valid = pd.concat(
+    [_assign_tree_key(g) for _, g in valid.groupby('site_name', dropna=False)],
+    ignore_index=True
+)
 
 # 去除極端值函式（IQR法）
 def remove_outliers_and_mean(series):
@@ -87,8 +108,10 @@ def remove_outliers_and_mean(series):
     return round(filtered.mean(), 1)
 
 # 每群統計
-result = valid.groupby('tree_group').agg(
+result = valid.groupby('tree_key').agg(
     record_id=('record_id', 'first'),
+    站點=('site_name', 'first'),
+    track_id=('track_id', 'first'),
     開始時間=('DATETIME', 'first'),
     結束時間=('DATETIME', 'last'),
     筆數=('ToF_Dist1_cm', 'count'),
