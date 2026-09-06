@@ -78,6 +78,17 @@ valid = df[
     (df['ToF_Dist1_cm'] <= MAX_VALID_DIST)
 ].copy().reset_index(drop=True)
 
+# 去除重複匯入的資料：
+#   曾發現同一批量測（同站點、同時間戳記、同距離、同 track_id）被完整重複寫入
+#   資料庫好幾次（例如同一秒的同一筆讀值出現在 4 個不同的 record_id）。
+#   時間間隔分群完全依賴時間戳記排序，遇到這種重複資料會把彼此不相干、
+#   record_id 差很遠的重複列誤判成同一群。這裡在分群前先去重，只保留
+#   record_id 最小（最早寫入）的那一筆。
+valid = valid.sort_values('record_id').drop_duplicates(
+    subset=['site_name', 'DATE', 'TIME', 'ToF_Dist1_cm', 'track_id'],
+    keep='first'
+).reset_index(drop=True)
+
 # 分群邏輯：
 #   - 該站點有 track_id（影片追蹤編號）資料時，代表是連續錄製（可能中途不停頓），
 #     ToF 讀值的時間間隔會失效，改以 track_id 分群 —— 每個非 NULL 的 track_id
