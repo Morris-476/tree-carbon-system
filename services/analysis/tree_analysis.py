@@ -108,8 +108,10 @@ def remove_outliers_and_mean(series):
     return round(filtered.mean(), 1)
 
 # 每群統計
+# record_id 取該群「中間（偏後）」那一筆，讓寫回 Final_Dist_cm 的代表列
+# 盡量落在群內資料的中段，而不是永遠卡在最前面。
 result = valid.groupby('tree_key').agg(
-    record_id=('record_id', 'first'),
+    record_id=('record_id', lambda s: s.iloc[len(s) // 2]),
     站點=('site_name', 'first'),
     track_id=('track_id', 'first'),
     開始時間=('DATETIME', 'first'),
