@@ -324,6 +324,24 @@ def _coord_to_str(value, positive_letter, negative_letter):
     return f'{abs(value):.7f}{letter}'
 
 
+# 供 services/analysis/tree_coordinate.py 寫回大圓公式推算出的樹木座標，
+# 覆蓋 Trees 原本存的（建樹時暫用的推車座標）經緯度。
+def update_tree_coordinate(tree_id, latitude, longitude) -> None:
+    """把推算出的樹木座標（十進位度）覆蓋寫回 Trees.[LATITUDE N/S] / [LONGITUDE E/W]。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError("資料庫連線失敗，無法寫回 Trees 座標")
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE Trees SET [LATITUDE N/S] = ?, [LONGITUDE E/W] = ? WHERE Tree_ID = ?",
+            _coord_to_str(latitude, 'N', 'S'), _coord_to_str(longitude, 'E', 'W'), tree_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def save_time_synced_measurements(records: list, site_name) -> dict:
     """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
     整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
