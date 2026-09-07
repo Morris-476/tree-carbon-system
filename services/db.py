@@ -342,6 +342,33 @@ def update_tree_coordinate(tree_id, latitude, longitude) -> None:
         conn.close()
 
 
+# 張恆輔 9/7新增：Measurements.Tree_ID 目前的分群邏輯還不穩定（同一棵樹可能對到
+# 好幾筆 Final_Dist_cm），座標計算改成不比對既有 Trees 記錄，每筆符合條件的量測
+# 都直接新增一筆 Trees 記錄（Tree_ID 為 IDENTITY，接續現有最大值往下遞增）。
+def insert_tree_coordinate(latitude, longitude, tracker_id=None) -> int:
+    """新增一筆 Trees 記錄，座標為算出的樹木座標。tracker_id 為 None 時
+    （量測列沒有追蹤編號可用）自動接續 Trees 現有最大 tracker_id 遞增一號，
+    因為 Trees.tracker_id 為 NOT NULL。回傳新增的 Tree_ID。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError("資料庫連線失敗，無法寫回 Trees 座標")
+    try:
+        cursor = conn.cursor()
+        if tracker_id is None:
+            cursor.execute("SELECT ISNULL(MAX(tracker_id), 0) + 1 FROM Trees")
+            tracker_id = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO Trees (tracker_id, [LATITUDE N/S], [LONGITUDE E/W]) "
+            "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?)",
+            tracker_id, _coord_to_str(latitude, 'N', 'S'), _coord_to_str(longitude, 'E', 'W')
+        )
+        tree_id = cursor.fetchone()[0]
+        conn.commit()
+        return tree_id
+    finally:
+        conn.close()
+
+
 def save_time_synced_measurements(records: list, site_name) -> dict:
     """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
     整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
