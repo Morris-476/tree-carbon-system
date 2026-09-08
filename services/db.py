@@ -13,10 +13,9 @@ import uuid
 import pyodbc
 import config
 
-# IPCC 預設含碳率（生質量中碳的比例），用於由 carbon_absorpation 反推 biomass。
-# Measurements.biomass 為 NOT NULL，但目前專案內尚無正式的生質量計算公式，
-# 待負責固碳計算的同學補上真正公式後，這裡應替換掉。
-CARBON_FRACTION = 0.47
+# 含碳率（生質量中碳的比例）現已改為依樹種存在 Species_Ref.carbon_fraction，
+# 這裡的常數只在查不到樹種（species_id 為 None）時當備援值使用。
+DEFAULT_CARBON_FRACTION = 0.47
 
 
 def get_db_connection():
@@ -72,6 +71,20 @@ def _get_or_create_species(cursor, species_name: str) -> int:
         species_name
     )
     return cursor.fetchone()[0]
+
+
+def _get_carbon_fraction(cursor, species_id) -> float:
+    """查詢該樹種的含碳率（Species_Ref.carbon_fraction）。
+    species_id 為 None（沒有辨識出樹種）或查無此列時，回傳 DEFAULT_CARBON_FRACTION。
+    """
+    if species_id is not None:
+        cursor.execute(
+            "SELECT carbon_fraction FROM Species_Ref WHERE species_id = ?", species_id
+        )
+        row = cursor.fetchone()
+        if row is not None:
+            return float(row[0])
+    return DEFAULT_CARBON_FRACTION
 
 
 # 這個 BUG 的核心修法：Trees.tracker_id 為 NOT NULL，代表每一棵「偵測到的樹」
@@ -200,7 +213,8 @@ def save_pipeline_record(species, dbh, carbon, lat, lon,
         species_id = _get_or_create_species(cursor, species) if species else None
         tree_id = _get_or_create_tree_id(cursor, track_id, species_id, lat, lon)
 
-        biomass = float(carbon) / CARBON_FRACTION
+        carbon_fraction = _get_carbon_fraction(cursor, species_id)
+        biomass = float(carbon) / carbon_fraction
         now = datetime.datetime.now()
         cursor.execute(
             "INSERT INTO Measurements "
