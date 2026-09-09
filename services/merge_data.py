@@ -120,7 +120,7 @@ def align_sensor_data(
             direction='nearest',
             tolerance=pd.Timedelta(seconds=max_gap_seconds),
         )
-        merged['rtk_gap_ms'] = (merged['recorded_at'] - merged['rtk_recorded_at']).dt.total_seconds().abs() * 1000
+        merged['gnss_gap_ms'] = (merged['recorded_at'] - merged['rtk_recorded_at']).dt.total_seconds().abs() * 1000
         merged['video_offset_ms'] = (merged['recorded_at'] - video_start_at).dt.total_seconds() * 1000
 
         video_name = os.path.basename(video_filename) if video_filename else None
@@ -140,7 +140,7 @@ def align_sensor_data(
                 'rtk_height_m': None if pd.isna(row['HEIGHT']) else float(row['HEIGHT']),
                 'rtk_speed_mps': None if pd.isna(row['SPEED']) else float(row['SPEED']),
                 'rtk_heading_deg': None if pd.isna(row['HEADING']) else float(row['HEADING']),
-                'rtk_gap_ms': None if pd.isna(row['rtk_gap_ms']) else int(row['rtk_gap_ms']),
+                'gnss_gap_ms': None if pd.isna(row['gnss_gap_ms']) else int(row['gnss_gap_ms']),
                 'video_offset_ms': int(row['video_offset_ms']),
             })
 
