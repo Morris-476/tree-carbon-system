@@ -40,7 +40,7 @@ class SyncResult:
     # 影片影格偏移：相對於影片第 0 影格的毫秒數，None 表示未提供影片起始時間
     frame_offset_ms: Optional[int]
     # 實際採用的 RTK 紀錄與快門時刻的時間差（毫秒），供偵錯用
-    rtk_gap_ms: int
+    gnss_gap_ms: int
 
 
 def align_measurements(
