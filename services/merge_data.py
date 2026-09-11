@@ -1,7 +1,7 @@
 # 負責人：蔡宗倫
 # 開發日期：2026/08/16
 # 2026/08/24 修改：改為純運算邏輯（不寫入資料庫、不輸出檔案），供 /api/upload 上傳流程呼叫
-# 用意：對齊 Arduino(ToF) 與 RTK 的 CSV 數據，並推算影片起始時間，回傳合併後的資料
+# 用意：對齊 Arduino(ToF) 與 GNSS 的 CSV 數據，並推算影片起始時間，回傳合併後的資料
 
 import os
 from datetime import datetime
@@ -34,8 +34,8 @@ def _read_tof_csv(arduino_path: str) -> pd.DataFrame:
     return df.drop(columns=['DATE', 'TIME'])
 
 
-def _parse_rtk_datetime(date_val, time_val) -> datetime:
-    # RTK DATE 為 YYMMDD、TIME 為 HHMMSS（皆可能省略前導 0，故 zfill 補齊）
+def _parse_gnss_datetime(date_val, time_val) -> datetime:
+    # GNSS DATE 為 YYMMDD、TIME 為 HHMMSS（皆可能省略前導 0，故 zfill 補齊）
     d = str(int(date_val)).zfill(6)
     t = str(int(time_val)).zfill(6)
     return datetime(2000 + int(d[0:2]), int(d[2:4]), int(d[4:6]), int(t[0:2]), int(t[2:4]), int(t[4:6]))
@@ -48,49 +48,49 @@ def _parse_coord(value: str) -> float:
     return sign * float(text[:-1])
 
 
-def _read_rtk_csv(rtk_path: str) -> pd.DataFrame:
-    df = pd.read_csv(rtk_path, encoding='utf-8-sig')
+def _read_gnss_csv(gnss_path: str) -> pd.DataFrame:
+    df = pd.read_csv(gnss_path, encoding='utf-8-sig')
     df.columns = [c.strip() for c in df.columns]
 
     required = ['INDEX', 'TAG', 'DATE', 'TIME', 'LATITUDE N/S', 'LONGITUDE E/W', 'HEIGHT', 'SPEED', 'HEADING']
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise MergeDataError(f'RTK 檔案缺少必要欄位 {missing}，請檢查檔案格式：{rtk_path}')
+        raise MergeDataError(f'GNSS 檔案缺少必要欄位 {missing}，請檢查檔案格式：{gnss_path}')
 
-    df['recorded_at'] = [_parse_rtk_datetime(d, t) for d, t in zip(df['DATE'], df['TIME'])]
+    df['recorded_at'] = [_parse_gnss_datetime(d, t) for d, t in zip(df['DATE'], df['TIME'])]
     df['latitude'] = df['LATITUDE N/S'].apply(_parse_coord)
     df['longitude'] = df['LONGITUDE E/W'].apply(_parse_coord)
 
-    # 依需求刪除 RTK 的 INDEX 欄位；DATE/TIME/原始經緯度欄位已轉換為 recorded_at/latitude/longitude，不再保留
+    # 依需求刪除 GNSS 的 INDEX 欄位；DATE/TIME/原始經緯度欄位已轉換為 recorded_at/latitude/longitude，不再保留
     return df.drop(columns=['INDEX', 'DATE', 'TIME', 'LATITUDE N/S', 'LONGITUDE E/W'])
 
 
 def align_sensor_data(
     arduino_path: str,
-    rtk_path: str,
+    gnss_path: str,
     video_filename: "str | None" = None,
     video_start_at: "datetime | None" = None,
     max_gap_seconds: int = 3,
 ) -> dict:
     """
-    對齊 Arduino(ToF) 與 RTK 的時間戳記並合併，推算影片起始時間，回傳合併後的資料。
+    對齊 Arduino(ToF) 與 GNSS 的時間戳記並合併，推算影片起始時間，回傳合併後的資料。
     純運算邏輯，不寫入資料庫、不輸出檔案。
 
     對齊邏輯：
-      - 以 Arduino(ToF) 的紀錄為主軸（逐秒連續紀錄），用 merge_asof 抓最接近時間的 RTK 紀錄
+      - 以 Arduino(ToF) 的紀錄為主軸（逐秒連續紀錄），用 merge_asof 抓最接近時間的 GNSS 紀錄
         （容忍誤差 max_gap_seconds 內才算配對成功，超過就是沒有 GPS 座標的那幾秒）
       - 影片起始時間：Arduino 開機記錄與錄影幾乎同時開始，因此以 Arduino 最早一筆時間戳記
         作為影片第 0 影格的真實時間（若呼叫端已知更準確的時間，可用 video_start_at 覆蓋）
-        ⚠️ 之所以不用 RTK 最早時間戳記，是因為 GPS 定位需要數秒到十幾秒才能拿到第一筆有效座標，
-           RTK 檔案的第一筆紀錄時間會比實際開始晚，用它當基準會讓影片offset系統性偏移
+        ⚠️ 之所以不用 GNSS 最早時間戳記，是因為 GPS 定位需要數秒到十幾秒才能拿到第一筆有效座標，
+           GNSS 檔案的第一筆紀錄時間會比實際開始晚，用它當基準會讓影片offset系統性偏移
       - 合併後重複欄位（兩份檔案都有的 DATE/TIME）只保留一份，統一為 recorded_at
 
     Args:
         arduino_path:     Arduino(ToF) CSV 路徑，例如 TREE_015.CSV
-        rtk_path:          RTK CSV 路徑，例如 01182401.CSV
+        gnss_path:          GNSS CSV 路徑，例如 01182401.CSV
         video_filename:    對應的影片檔名，供辨識結果標記使用（可為 None）
         video_start_at:    影片第 0 影格的真實時間；未提供時自動取 Arduino 最早時間戳記
-        max_gap_seconds:   RTK 與 Arduino 紀錄的最大容忍時間差（秒），預設 3 秒
+        max_gap_seconds:   GNSS 與 Arduino 紀錄的最大容忍時間差（秒），預設 3 秒
 
     Returns:
         dict，成功時含：
@@ -102,25 +102,25 @@ def align_sensor_data(
     try:
         if not os.path.exists(arduino_path):
             raise MergeDataError(f'找不到 Arduino 檔案，請確認路徑：{arduino_path}')
-        if not os.path.exists(rtk_path):
-            raise MergeDataError(f'找不到 RTK 檔案，請確認路徑：{rtk_path}')
+        if not os.path.exists(gnss_path):
+            raise MergeDataError(f'找不到 GNSS 檔案，請確認路徑：{gnss_path}')
 
         df_arduino = _read_tof_csv(arduino_path).sort_values('recorded_at').reset_index(drop=True)
-        df_rtk = _read_rtk_csv(rtk_path).rename(columns={'recorded_at': 'rtk_recorded_at'})
-        df_rtk = df_rtk.sort_values('rtk_recorded_at').reset_index(drop=True)
+        df_gnss = _read_gnss_csv(gnss_path).rename(columns={'recorded_at': 'gnss_recorded_at'})
+        df_gnss = df_gnss.sort_values('gnss_recorded_at').reset_index(drop=True)
 
         if video_start_at is None:
             video_start_at = df_arduino['recorded_at'].min().to_pydatetime()
 
         merged = pd.merge_asof(
             df_arduino,
-            df_rtk,
+            df_gnss,
             left_on='recorded_at',
-            right_on='rtk_recorded_at',
+            right_on='gnss_recorded_at',
             direction='nearest',
             tolerance=pd.Timedelta(seconds=max_gap_seconds),
         )
-        merged['gnss_gap_ms'] = (merged['recorded_at'] - merged['rtk_recorded_at']).dt.total_seconds().abs() * 1000
+        merged['gnss_gap_ms'] = (merged['recorded_at'] - merged['gnss_recorded_at']).dt.total_seconds().abs() * 1000
         merged['video_offset_ms'] = (merged['recorded_at'] - video_start_at).dt.total_seconds() * 1000
 
         video_name = os.path.basename(video_filename) if video_filename else None
@@ -134,12 +134,12 @@ def align_sensor_data(
                 'led_status': str(row['LED_Status']),
                 'tof_dist1_cm': float(row['ToF_Dist1_cm']),
                 'tof_dist2_cm': float(row['ToF_Dist2_cm']),
-                'rtk_tag': None if pd.isna(row['TAG']) else str(row['TAG']),
+                'gnss_tag': None if pd.isna(row['TAG']) else str(row['TAG']),
                 'latitude': None if pd.isna(row['latitude']) else float(row['latitude']),
                 'longitude': None if pd.isna(row['longitude']) else float(row['longitude']),
-                'rtk_height_m': None if pd.isna(row['HEIGHT']) else float(row['HEIGHT']),
-                'rtk_speed_mps': None if pd.isna(row['SPEED']) else float(row['SPEED']),
-                'rtk_heading_deg': None if pd.isna(row['HEADING']) else float(row['HEADING']),
+                'gnss_height_m': None if pd.isna(row['HEIGHT']) else float(row['HEIGHT']),
+                'gnss_speed_mps': None if pd.isna(row['SPEED']) else float(row['SPEED']),
+                'gnss_heading_deg': None if pd.isna(row['HEADING']) else float(row['HEADING']),
                 'gnss_gap_ms': None if pd.isna(row['gnss_gap_ms']) else int(row['gnss_gap_ms']),
                 'video_offset_ms': int(row['video_offset_ms']),
             })
@@ -164,9 +164,9 @@ def align_sensor_data(
 # 本地端測試執行區塊（供單機驗證使用）
 if __name__ == '__main__':
     test_arduino = 'data/raw/TREE_015.CSV'
-    test_rtk = 'data/raw/01182401.CSV'
+    test_gnss = 'data/raw/01182401.CSV'
 
-    result = align_sensor_data(test_arduino, test_rtk, video_filename='IMG_4631.MOV')
+    result = align_sensor_data(test_arduino, test_gnss, video_filename='IMG_4631.MOV')
     if result['status'] == 'success':
         print(f"成功：{result['message']}，共 {result['total_count']} 筆（其中 {result['matched_gps_count']} 筆有 GPS 座標）")
     else:

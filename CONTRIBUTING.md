@@ -46,7 +46,7 @@ project/
 │   │   ├── diameter_calc.py
 │   │   └── visualizer.py
 │   └── parsers/
-│       ├── rtk_parser.py
+│       ├── gnss_parser.py
 │       └── csv_parser.py
 ├── static/
 │   ├── css/style.css
@@ -83,7 +83,7 @@ project/
   routes/（pages.py、api.py、admin.py）
   services/（db.py、yolo.py、data_pipeline.py）
   services/analysis/（detector.py、tracker.py、time_sync.py、diameter_calc.py、visualizer.py）
-  services/parsers/（rtk_parser.py、csv_parser.py）
+  services/parsers/（gnss_parser.py、csv_parser.py）
   templates/（base.html、index.html、map.html、about.html、admin/login.html、admin/dashboard.html）
   static/（css/style.css、js/map.js、js/admin.js）
 
@@ -224,9 +224,9 @@ fetch('/api/trees')
 
 ### 資料處理管線順序（時間先後）
 
-1. 使用者上傳 RTK / Arduino(ToF) / 影片三個檔案（`/api/upload`）
-2. **時間對齊**：`services/merge_data.py` 的 `align_sensor_data()`，把 Arduino(ToF) 跟 RTK 依時間戳記對齊，算出每筆資料對應影片第幾毫秒（`video_offset_ms`）
-3. **影片切幀**：依 ToF 取樣間隔（500ms）把影片切成一張張照片，用 `video_offset_ms` 對回步驟 2 對齊好的資料，取得該幀對應的 ToF 距離、RTK 座標
+1. 使用者上傳 GNSS / Arduino(ToF) / 影片三個檔案（`/api/upload`）
+2. **時間對齊**：`services/merge_data.py` 的 `align_sensor_data()`，把 Arduino(ToF) 跟 GNSS 依時間戳記對齊，算出每筆資料對應影片第幾毫秒（`video_offset_ms`）
+3. **影片切幀**：依 ToF 取樣間隔（500ms）把影片切成一張張照片，用 `video_offset_ms` 對回步驟 2 對齊好的資料，取得該幀對應的 ToF 距離、GNSS 座標
 4. **多物件追蹤**：`services/analysis/tracker.py` 對每一幀跑 YOLO-seg + ByteTrack，輸出每幀的 `track_id`（同一棵樹全程不變）與 `pixel_width`（像素寬度，尚非公分）
 5. **樹徑換算**：同一個 `track_id` 的多幀資料，依「樹徑計算邏輯」（見下方）算出這棵樹最終的樹徑（cm）
 6. **座標換算**：依「樹木座標計算邏輯」（見下方）算出這棵樹的真實座標
@@ -264,7 +264,7 @@ fetch('/api/trees')
 
 ### 樹木座標計算邏輯
 
-- ⚠️ **目前資料庫存的座標是拍攝當下的原始 RTK 座標（車輛位置），不是樹木實際位置**，校正邏輯尚未實作
+- ⚠️ **目前資料庫存的座標是拍攝當下的原始 GNSS 座標（車輛位置），不是樹木實際位置**，校正邏輯尚未實作
 - 規劃邏輯：感測器與車輛前進方向垂直（90 度）安裝，樹木真實座標 = 拍攝點座標，往感測器朝向那一側，依「方位角(HEADING) ± 90 度」的方向，偏移「ToF 距離」那麼遠（標準地理座標平移公式）
 - `Measurements` 已有 `HEADING`、`ToF_Dist1_cm`／`ToF_Dist2_cm` 欄位，**不需要新增資料庫欄位**，只需要在寫入 `Trees` 前補上這段計算邏輯，並讓 `_get_or_create_tree_id()` 多接收一個 `heading` 參數
 - 感測器朝哪一側（左/右）是固定的硬體安裝方式，建議存在 `config.py` 當常數，不需要資料庫欄位

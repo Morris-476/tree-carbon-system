@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// 張恆輔 8/15新增：資料上傳頁（RTK／Arduino／MP4）
+// 張恆輔 8/15新增：資料上傳頁（GNSS／Arduino／MP4）
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('upload-form');
     if (!form) return;

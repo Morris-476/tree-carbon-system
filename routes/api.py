@@ -17,25 +17,25 @@ api_bp = Blueprint('api', __name__)
 # 負責人：蔡宗倫
 # 開發日期：2026/08/24
 # 2026/08/29 修改：對齊完成後改為連同影片截圖一起寫入 dbo.Measurements
-# 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並寫入資料庫
+# 用意：接收管理員上傳的 GNSS / Arduino / 影片檔案，執行時間對齊運算並寫入資料庫
 @api_bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
-    rtk_file = request.files.get('rtk_file')
+    gnss_file = request.files.get('gnss_file')
     arduino_file = request.files.get('arduino_file')
     mp4_file = request.files.get('mp4_file')
 
-    if not rtk_file or not rtk_file.filename:
-        return jsonify({'error': '請上傳 RTK 檔案'}), 400
+    if not gnss_file or not gnss_file.filename:
+        return jsonify({'error': '請上傳 GNSS 檔案'}), 400
     if not arduino_file or not arduino_file.filename:
         return jsonify({'error': '請上傳 Arduino 檔案'}), 400
 
     upload_dir = os.path.join(config.UPLOAD_FOLDER, uuid.uuid4().hex)
     os.makedirs(upload_dir, exist_ok=True)
 
-    rtk_path = os.path.join(upload_dir, rtk_file.filename)
+    gnss_path = os.path.join(upload_dir, gnss_file.filename)
     arduino_path = os.path.join(upload_dir, arduino_file.filename)
-    rtk_file.save(rtk_path)
+    gnss_file.save(gnss_path)
     arduino_file.save(arduino_path)
 
     video_path = None
@@ -44,7 +44,7 @@ def api_upload():
         mp4_file.save(video_path)
 
     result = data_pipeline.run_upload_and_save(
-        rtk_file_path=rtk_path,
+        gnss_file_path=gnss_path,
         csv_file_path=arduino_path,
         video_path=video_path,
     )

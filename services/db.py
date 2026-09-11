@@ -260,7 +260,7 @@ def _ensure_measurement_columns(cursor):
 # 欄位改名：rtk_gap_ms -> gnss_gap_ms（GPS 定位資料其實是 GNSS，不是只有 RTK，
 # 欄位名稱改得更準確）。用 sp_rename 保留既有資料，不是新增再刪除舊欄。
 # 已經改過名字的資料庫會直接跳過，可安全重複執行。
-def _rename_rtk_gap_column(cursor):
+def _rename_legacy_gnss_gap_column(cursor):
     cursor.execute(
         "IF COL_LENGTH('dbo.Measurements', 'rtk_gap_ms') IS NOT NULL "
         "AND COL_LENGTH('dbo.Measurements', 'gnss_gap_ms') IS NULL "
@@ -298,7 +298,7 @@ def _ensure_schema_ready(cursor):
     global _schema_ready
     if _schema_ready:
         return
-    _rename_rtk_gap_column(cursor)
+    _rename_legacy_gnss_gap_column(cursor)
     _ensure_measurement_columns(cursor)
     _ensure_tree_columns(cursor)
     _drop_unused_measurement_columns(cursor)
@@ -355,8 +355,8 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 tree_id, 0, 0, 0, 'Pending',
                 recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
-                r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
-                r['rtk_tag'], r['rtk_height_m'],
+                r['latitude'], r['longitude'], r['gnss_speed_mps'], r['gnss_heading_deg'],
+                r['gnss_tag'], r['gnss_height_m'],
                 r['laser_status'], r['led_status'],
                 int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
                 r['gnss_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
@@ -371,7 +371,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
         conn.close()
 
 
-# ── 時間對齊管線寫入（Arduino/RTK 對齊後的原始感測器資料，舊版暫存表，目前未使用）
+# ── 時間對齊管線寫入（Arduino/GNSS 對齊後的原始感測器資料，舊版暫存表，目前未使用）
 # 負責人：蔡宗倫
 # 開發日期：2026/08/22
 def save_sensor_sync_records(records: list) -> dict:
@@ -392,7 +392,7 @@ def save_sensor_sync_records(records: list) -> dict:
             """
             INSERT INTO Sensor_Sync_Records (
                 merge_batch_id, arduino_tree_id, recorded_at,
-                latitude, longitude, rtk_height_m, rtk_speed_mps, rtk_heading_deg, rtk_tag,
+                latitude, longitude, gnss_height_m, gnss_speed_mps, gnss_heading_deg, gnss_tag,
                 laser_status, led_status, tof_dist1_cm, tof_dist2_cm,
                 gnss_gap_ms, video_offset_ms, video_filename
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -400,8 +400,8 @@ def save_sensor_sync_records(records: list) -> dict:
             [
                 (
                     r['merge_batch_id'], r['arduino_tree_id'], r['recorded_at'],
-                    r['latitude'], r['longitude'], r['rtk_height_m'], r['rtk_speed_mps'],
-                    r['rtk_heading_deg'], r['rtk_tag'],
+                    r['latitude'], r['longitude'], r['gnss_height_m'], r['gnss_speed_mps'],
+                    r['gnss_heading_deg'], r['gnss_tag'],
                     r['laser_status'], r['led_status'], r['tof_dist1_cm'], r['tof_dist2_cm'],
                     r['gnss_gap_ms'], r['video_offset_ms'], r['video_filename'],
                 )
