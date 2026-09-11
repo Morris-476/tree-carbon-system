@@ -198,6 +198,44 @@ def get_species_list():
         conn.close()
 
 
+# 2026/09/06新增：資料上傳頁用，供選擇拍攝手機型號的下拉選單
+# Camera_Profiles 資料表尚未建立（見 sql/2026-09-06_add_camera_profiles.sql），
+# 查詢失敗時先回傳與 static/measure/app.js 的 CAMERA_PRESETS 相同的內建清單，
+# 等資料表建好、遷移腳本跑過後會自動改吃資料庫資料，不用再改這支函式。
+_FALLBACK_CAMERA_PROFILES = [
+    {'name': 'iPhone 13', 'focal_mm': 5.7, 'sensor_width': 7.5},
+    {'name': 'iPhone 13 Pro', 'focal_mm': 5.8, 'sensor_width': 7.8},
+    {'name': 'iPhone 14', 'focal_mm': 5.7, 'sensor_width': 7.5},
+    {'name': 'iPhone 14 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'iPhone 15', 'focal_mm': 6.2, 'sensor_width': 8.2},
+    {'name': 'iPhone 15 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'iPhone 16', 'focal_mm': 6.2, 'sensor_width': 8.2},
+    {'name': 'iPhone 16 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'Samsung Galaxy S24 Ultra', 'focal_mm': 6.5, 'sensor_width': 9.9},
+]
+
+
+def get_camera_profiles():
+    """回傳可選的拍攝設備清單（型號、焦距、感光元件寬度），供資料上傳頁下拉選單使用。"""
+    conn = get_db_connection()
+    if conn is None:
+        return _FALLBACK_CAMERA_PROFILES
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT profile_id, name, focal_mm, sensor_width "
+            "FROM Camera_Profiles ORDER BY name"
+        )
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return rows if rows else _FALLBACK_CAMERA_PROFILES
+    except Exception as e:
+        print(f"get_camera_profiles 查詢失敗，改用內建清單: {e}")
+        return _FALLBACK_CAMERA_PROFILES
+    finally:
+        conn.close()
+
+
 # ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
 def get_tree_list():
     """回傳樹木清單，供資料展示頁使用。"""
@@ -264,7 +302,7 @@ def _ensure_measurement_columns(cursor):
         'LED_Status': 'VARCHAR(10) NULL',
         'ToF_Dist1_cm': 'INT NULL',
         'ToF_Dist2_cm': 'INT NULL',
-        'rtk_gap_ms': 'INT NULL',
+        'gnss_gap_ms': 'INT NULL',
         'video_offset_ms': 'INT NULL',
         'site_name': 'VARCHAR(255) NULL',
         'image_data': 'VARBINARY(MAX) NULL',
@@ -278,6 +316,17 @@ def _ensure_measurement_columns(cursor):
             f"IF COL_LENGTH('dbo.Measurements', '{name}') IS NULL "
             f"ALTER TABLE dbo.Measurements ADD [{name}] {ddl}"
         )
+
+
+# 欄位改名：rtk_gap_ms -> gnss_gap_ms（GPS 定位資料其實是 GNSS，不是只有 RTK，
+# 欄位名稱改得更準確）。用 sp_rename 保留既有資料，不是新增再刪除舊欄。
+# 已經改過名字的資料庫會直接跳過，可安全重複執行。
+def _rename_rtk_gap_column(cursor):
+    cursor.execute(
+        "IF COL_LENGTH('dbo.Measurements', 'rtk_gap_ms') IS NOT NULL "
+        "AND COL_LENGTH('dbo.Measurements', 'gnss_gap_ms') IS NULL "
+        "EXEC sp_rename 'dbo.Measurements.rtk_gap_ms', 'gnss_gap_ms', 'COLUMN'"
+    )
 
 
 # 補 Trees 缺的 site_id 欄位：_get_or_create_tree_id() 的 INSERT 語法裡有
@@ -310,6 +359,7 @@ def _ensure_schema_ready(cursor):
     global _schema_ready
     if _schema_ready:
         return
+    _rename_rtk_gap_column(cursor)
     _ensure_measurement_columns(cursor)
     _ensure_tree_columns(cursor)
     _drop_unused_measurement_columns(cursor)
@@ -406,7 +456,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 'Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], '
                 'latitude, longitude, SPEED, HEADING, TAG, HEIGHT, '
                 'Laser_Status, LED_Status, ToF_Dist1_cm, ToF_Dist2_cm, '
-                'rtk_gap_ms, video_offset_ms, site_name, image_data, '
+                'gnss_gap_ms, video_offset_ms, site_name, image_data, '
                 'track_id, pixel_width'
                 ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 tree_id, 0, 0, 0, 'Pending',
@@ -415,7 +465,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 r['rtk_tag'], r['rtk_height_m'],
                 r['laser_status'], r['led_status'],
                 int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
-                r['rtk_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
+                r['gnss_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
                 r.get('track_id'), r.get('pixel_width'),
             )
         conn.commit()
@@ -450,7 +500,7 @@ def save_sensor_sync_records(records: list) -> dict:
                 merge_batch_id, arduino_tree_id, recorded_at,
                 latitude, longitude, rtk_height_m, rtk_speed_mps, rtk_heading_deg, rtk_tag,
                 laser_status, led_status, tof_dist1_cm, tof_dist2_cm,
-                rtk_gap_ms, video_offset_ms, video_filename
+                gnss_gap_ms, video_offset_ms, video_filename
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
@@ -459,7 +509,7 @@ def save_sensor_sync_records(records: list) -> dict:
                     r['latitude'], r['longitude'], r['rtk_height_m'], r['rtk_speed_mps'],
                     r['rtk_heading_deg'], r['rtk_tag'],
                     r['laser_status'], r['led_status'], r['tof_dist1_cm'], r['tof_dist2_cm'],
-                    r['rtk_gap_ms'], r['video_offset_ms'], r['video_filename'],
+                    r['gnss_gap_ms'], r['video_offset_ms'], r['video_filename'],
                 )
                 for r in records
             ]

@@ -137,3 +137,11 @@ def api_delete_tree(tree_id: int):
     if not db_service.delete_tree(tree_id):
         return jsonify({'error': '刪除失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
+
+
+# ── API：拍攝設備清單（資料上傳頁下拉選單用）─────────────────────
+# 2026/09/06新增
+@admin_bp.route('/api/camera-profiles', methods=['GET'])
+@login_required
+def api_get_camera_profiles():
+    return jsonify(db_service.get_camera_profiles()), 200

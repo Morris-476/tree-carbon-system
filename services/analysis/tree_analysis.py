@@ -94,13 +94,26 @@ def remove_outliers_and_mean(series):
 
 def compute_tree_groups(df: pd.DataFrame) -> pd.DataFrame:
     """把清洗過的 Measurements 依 tree_key 分群，對每群 ToF 距離做 IQR 去極端值後取平均。"""
+    # 去除重複匯入的資料：
+    #   曾發現同一批量測（同站點、同時間戳記、同距離、同 track_id）被完整重複寫入
+    #   資料庫好幾次（例如同一秒的同一筆讀值出現在 4 個不同的 record_id）。
+    #   時間間隔分群完全依賴時間戳記排序，遇到這種重複資料會把彼此不相干、
+    #   record_id 差很遠的重複列誤判成同一群。這裡在分群前先去重，只保留
+    #   record_id 最小（最早寫入）的那一筆。
+    df = df.sort_values('record_id').drop_duplicates(
+        subset=['site_name', 'DATE', 'TIME', 'ToF_Dist1_cm', 'track_id'],
+        keep='first'
+    ).reset_index(drop=True)
+
     valid = pd.concat(
         [_assign_tree_key(g) for _, g in df.groupby('site_name', dropna=False)],
         ignore_index=True
     )
 
+    # record_id 取該群「中間（偏後）」那一筆，讓寫回 Final_Dist_cm 的代表列
+    # 盡量落在群內資料的中段，而不是永遠卡在最前面。
     result = valid.groupby('tree_key').agg(
-        record_id=('record_id', 'first'),
+        record_id=('record_id', lambda s: s.iloc[len(s) // 2]),
         站點=('site_name', 'first'),
         track_id=('track_id', 'first'),
         開始時間=('DATETIME', 'first'),

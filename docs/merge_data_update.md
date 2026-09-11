@@ -42,7 +42,7 @@ Arduino(ToF) / RTK / 影片 時間對齊（純運算邏輯，透過資料上傳�
   會是 `null`，不會硬湊錯的座標。
 - 兩份檔案都有的 `DATE`/`TIME` 欄位，合併後只保留一份 `recorded_at`（重複欄位收斂為 1 個）。
 - RTK 的 `INDEX` 欄位依需求整個捨棄，不出現在回傳結果中。
-- 每筆紀錄額外算出 `video_offset_ms`（相對影片起始時間的毫秒數）與 `rtk_gap_ms`
+- 每筆紀錄額外算出 `video_offset_ms`（相對影片起始時間的毫秒數）與 `gnss_gap_ms`
   （配對到的 RTK 紀錄時間差，供之後偵錯用）。
 - 上傳的檔案會暫存到 `uploads/<隨機資料夾>/`（已在 `.gitignore` 排除，不進版控）。
 - 用實際的 TREE_015.CSV（47 筆）與 01182401.CSV（33 筆）驗證過完整 `/api/upload` 流程：
