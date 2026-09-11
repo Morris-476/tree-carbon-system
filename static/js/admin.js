@@ -98,6 +98,53 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// 2026/09/06新增：資料上傳頁的拍攝設備下拉選單，串接 GET /api/camera-profiles
+// 資料表 Camera_Profiles 尚未建立，後端會先回傳內建清單，介面照樣可用
+document.addEventListener('DOMContentLoaded', () => {
+    const select = document.getElementById('camera-profile-select');
+    if (!select) return;
+
+    const manualFields = document.getElementById('camera-manual-fields');
+    const focalInput = document.getElementById('camera-focal-input');
+    const sensorWidthInput = document.getElementById('camera-sensor-width-input');
+
+    const applySelection = () => {
+        const isOther = select.value === '其他';
+        manualFields.hidden = !isOther;
+        focalInput.required = isOther;
+        sensorWidthInput.required = isOther;
+
+        if (isOther) {
+            focalInput.value = '';
+            sensorWidthInput.value = '';
+            return;
+        }
+
+        // 選了預設機型：把該選項存的 focal_mm/sensor_width 帶進隱藏欄位一起送出，
+        // 「其他」以外都不用使用者自己填數字
+        const selectedOption = select.options[select.selectedIndex];
+        focalInput.value = selectedOption.dataset.focalMm || '';
+        sensorWidthInput.value = selectedOption.dataset.sensorWidth || '';
+    };
+
+    select.addEventListener('change', applySelection);
+    applySelection();
+
+    fetch('/api/camera-profiles')
+        .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
+        .then((profiles) => {
+            profiles.forEach((profile) => {
+                const opt = document.createElement('option');
+                opt.value = profile.name;
+                opt.textContent = profile.name;
+                opt.dataset.focalMm = profile.focal_mm;
+                opt.dataset.sensorWidth = profile.sensor_width;
+                select.insertBefore(opt, select.querySelector('option[value="其他"]'));
+            });
+        })
+        .catch((err) => console.error('拍攝設備清單載入失敗', err));
+});
+
 // 張恆輔 8/25新增：數據管理維護頁（待審核資料表格 + 辨識結果圖彈窗）
 document.addEventListener('DOMContentLoaded', () => {
     const tbody = document.getElementById('manage-tbody');

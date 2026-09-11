@@ -249,6 +249,33 @@ a {
     display: none;
 }
 
+/* 2026/09/06新增：拍攝設備下拉選單 */
+.upload-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 280px;
+    font-size: 0.9rem;
+}
+
+.upload-field select,
+.upload-field input {
+    border: 1px solid #000;
+    border-radius: 20px;
+    padding: 8px 16px;
+    background: #fff;
+    font-size: 0.95rem;
+}
+
+.upload-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    align-items: center;
+}
+
 .upload-actions {
     display: flex;
     gap: 12px;
