@@ -198,6 +198,44 @@ def get_species_list():
         conn.close()
 
 
+# 2026/09/06新增：資料上傳頁用，供選擇拍攝手機型號的下拉選單
+# Camera_Profiles 資料表尚未建立（見 sql/2026-09-06_add_camera_profiles.sql），
+# 查詢失敗時先回傳與 static/measure/app.js 的 CAMERA_PRESETS 相同的內建清單，
+# 等資料表建好、遷移腳本跑過後會自動改吃資料庫資料，不用再改這支函式。
+_FALLBACK_CAMERA_PROFILES = [
+    {'name': 'iPhone 13', 'focal_mm': 5.7, 'sensor_width': 7.5},
+    {'name': 'iPhone 13 Pro', 'focal_mm': 5.8, 'sensor_width': 7.8},
+    {'name': 'iPhone 14', 'focal_mm': 5.7, 'sensor_width': 7.5},
+    {'name': 'iPhone 14 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'iPhone 15', 'focal_mm': 6.2, 'sensor_width': 8.2},
+    {'name': 'iPhone 15 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'iPhone 16', 'focal_mm': 6.2, 'sensor_width': 8.2},
+    {'name': 'iPhone 16 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'Samsung Galaxy S24 Ultra', 'focal_mm': 6.5, 'sensor_width': 9.9},
+]
+
+
+def get_camera_profiles():
+    """回傳可選的拍攝設備清單（型號、焦距、感光元件寬度），供資料上傳頁下拉選單使用。"""
+    conn = get_db_connection()
+    if conn is None:
+        return _FALLBACK_CAMERA_PROFILES
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT profile_id, name, focal_mm, sensor_width "
+            "FROM Camera_Profiles ORDER BY name"
+        )
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return rows if rows else _FALLBACK_CAMERA_PROFILES
+    except Exception as e:
+        print(f"get_camera_profiles 查詢失敗，改用內建清單: {e}")
+        return _FALLBACK_CAMERA_PROFILES
+    finally:
+        conn.close()
+
+
 # ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
 def get_tree_list():
     """回傳樹木清單，供資料展示頁使用。"""
