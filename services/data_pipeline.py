@@ -28,6 +28,12 @@ services/data_pipeline.py
 
 ⚠️  2026/08/29 修改：新增 run_upload_and_save()，把對齊結果連同影片截圖寫入 dbo.Measurements。
     對齊運算本身（merge_data.align_sensor_data）完全沒有更動。
+
+⚠️  2026/09/11 修改：run_upload_and_save() 寫入 Measurements 後，接著呼叫
+    tree_analysis.analyze_and_write_final_distances()（IQR 去極端值，寫回
+    Measurements.Final_Dist_cm）與 tree_coordinate.recalculate_tree_coordinates()
+    （依推車座標＋方位角＋Final_Dist_cm 推算樹木座標，寫入 Trees）。
+    之前這兩支函式都各自獨立、沒有被 pipeline 呼叫，上傳資料後不會生效。
 """
 from __future__ import annotations
 
@@ -40,6 +46,8 @@ import cv2
 from services import merge_data
 from services import db as db_service
 from services.analysis.tracker import TreeTracker
+from services.analysis import tree_analysis
+from services.analysis.tree_coordinate import recalculate_tree_coordinates
 import config
 
 
@@ -219,6 +227,12 @@ def run_upload_and_save(
     save_result = db_service.save_time_synced_measurements(result['records'], site_name)
     if save_result['status'] != 'success':
         return {'status': 'error', 'message': save_result['message']}
+
+    # 樹徑換算（IQR 篩選 + k值）仍待負責人補上；這裡先接上既有的
+    # IQR 去極端值（tree_analysis）與座標換算（tree_coordinate），
+    # 讓每次上傳資料後 Measurements.Final_Dist_cm 與 Trees 座標都能跟著更新。
+    tree_analysis.analyze_and_write_final_distances(verbose=False, save_csv=False)
+    recalculate_tree_coordinates()
 
     result['inserted'] = save_result['inserted']
     result['tree_id'] = save_result['tree_id']
