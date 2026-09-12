@@ -110,7 +110,12 @@ def api_get_trees():
 @login_required
 def api_update_tree(tree_id: int):
     """status 必填，只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。
-    dbh、carbon 可選（雙擊編輯後跟著確認一起送），型別錯誤回傳 400。
+    dbh、species 可選（雙擊編輯後跟著確認一起送），型別錯誤回傳 400。
+
+    2026/09/12修改：不再接受前端直接傳入的 carbon——固碳量必須是
+    「樹徑 × 樹種係數」算出來的，不能讓使用者手動填一個對不起來的數字。
+    改成後端用最新的 dbh／species（剛更新的，或原本就有的）重新算一次，
+    確保這兩個一改，固碳量一定跟著更新，不會停在舊數字。
     """
     data = request.get_json(silent=True) or {}
     new_status = data.get('status')
@@ -118,13 +123,13 @@ def api_update_tree(tree_id: int):
         return jsonify({'error': 'status 格式錯誤'}), 400
 
     dbh = data.get('dbh')
-    carbon = data.get('carbon')
+    species = data.get('species')
     if dbh is not None and not isinstance(dbh, (int, float)):
         return jsonify({'error': 'dbh 格式錯誤'}), 400
-    if carbon is not None and not isinstance(carbon, (int, float)):
-        return jsonify({'error': 'carbon 格式錯誤'}), 400
+    if species is not None and not isinstance(species, str):
+        return jsonify({'error': 'species 格式錯誤'}), 400
 
-    if not db_service.update_tree_status(tree_id, new_status, dbh=dbh, carbon=carbon):
+    if not db_service.admin_update_measurement(tree_id, new_status, dbh=dbh, species=species):
         return jsonify({'error': '更新失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
 

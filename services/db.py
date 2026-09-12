@@ -12,6 +12,7 @@ import os
 import uuid
 import pyodbc
 import config
+from services.carbon import calculate_carbon
 
 # IPCC 預設含碳率（生質量中碳的比例），用於由 carbon_absorpation 反推 biomass。
 # Measurements.biomass 為 NOT NULL，但目前專案內尚無正式的生質量計算公式，
@@ -822,34 +823,71 @@ def get_all_trees_admin():
 # 負責人：陳政雍 8/27 完成確認／刪除功能：實作 update_tree_status()、delete_tree()
 # 張恆輔 8/29修正：dbh／carbon 參數在之前的合併中被覆蓋掉了，導致
 # routes/admin.py 呼叫時傳入 dbh=/carbon= 會直接 TypeError（確認按鈕壞掉）。
-# dbh／carbon 可選（雙擊編輯後跟著確認一起送），只更新有帶值的欄位。
-def update_tree_status(tree_id: int, new_status: str, dbh=None, carbon=None) -> bool:
-    """後台：更新 Measurements 審核狀態，可一併更新 dbh／carbon_absorpation。
-    回傳 True 表示更新成功（有找到該筆）。
-    """
-    fields = ['status = ?']
-    params = [new_status]
-    if dbh is not None:
-        fields.append('dbh = ?')
-        params.append(dbh)
-    if carbon is not None:
-        fields.append('carbon_absorpation = ?')
-        params.append(carbon)
-    params.append(tree_id)
-
+#
+# 負責人：Morris，開發日期：2026/09/12
+# 改名為 admin_update_measurement()，不再接受前端直接傳入 carbon——固碳量
+# 一定要是「樹徑 × 樹種係數」算出來的，不能讓使用者手動填一個對不起來的
+# 數字。species 存在 Trees（同一 Tree_ID 底下其他紀錄會一併受影響），
+# dbh 存在 Measurements、只影響這一筆。兩者更新完（不管是剛改的，還是
+# 本來就有的）只要備齊，就重新算一次固碳量寫回，確保不會停在舊數字。
+def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=None) -> bool:
+    """後台：更新 Measurements 審核狀態，可一併更新樹徑／樹種，並重新計算
+    固碳量。回傳 True 表示更新成功（有找到該筆）。"""
     conn = get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
+
+        cursor.execute('SELECT Tree_ID, dbh FROM Measurements WHERE record_id = ?', record_id)
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        current_tree_id, current_dbh = row
+
+        if dbh is not None:
+            cursor.execute('UPDATE Measurements SET dbh = ? WHERE record_id = ?', dbh, record_id)
+            current_dbh = dbh
+
+        if species is not None and current_tree_id is not None:
+            species_id = _get_or_create_species(cursor, species)
+            cursor.execute(
+                'UPDATE Trees SET species_id = ? WHERE Tree_ID = ?',
+                species_id, current_tree_id
+            )
+
         cursor.execute(
-            f"UPDATE Measurements SET {', '.join(fields)} WHERE record_id = ?",
-            params
+            'UPDATE Measurements SET status = ? WHERE record_id = ?',
+            new_status, record_id
         )
+        found = cursor.rowcount > 0
+
+        if current_tree_id is not None and current_dbh is not None and current_dbh > 0:
+            cursor.execute("""
+                SELECT s.allo_param_a, s.allo_param_b, s.carbon_fraction
+                FROM Trees t
+                JOIN Species_Ref s ON s.species_id = t.species_id
+                WHERE t.Tree_ID = ?
+            """, current_tree_id)
+            species_row = cursor.fetchone()
+            if species_row is not None:
+                allo_a, allo_b, carbon_fraction = species_row
+                result = calculate_carbon(
+                    dbh=float(current_dbh),
+                    allo_param_a=float(allo_a) if allo_a is not None else None,
+                    allo_param_b=float(allo_b) if allo_b is not None else None,
+                    carbon_fraction=float(carbon_fraction) if carbon_fraction is not None else None,
+                )
+                if result.error is None:
+                    cursor.execute(
+                        'UPDATE Measurements SET biomass = ?, carbon_absorpation = ? WHERE record_id = ?',
+                        result.biomass_kg, result.carbon_kg, record_id
+                    )
+
         conn.commit()
-        return cursor.rowcount > 0
+        return found
     except Exception as e:
-        print(f"update_tree_status 更新失敗: {e}")
+        print(f"admin_update_measurement 更新失敗: {e}")
         conn.rollback()
         return False
     finally:
