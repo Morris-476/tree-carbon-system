@@ -23,48 +23,73 @@ AI 在開始編寫任何程式碼前，必須先詢問開發者以下三點，**
 | 資料庫 | Azure SQL Server（pyodbc 連線） |
 | 前端地圖 | Leaflet.js |
 | 前端語言 | 純 HTML / CSS / JavaScript（不使用 React 等框架） |
+| 影像辨識 | YOLOv8-seg（樹幹分割）＋ ByteTrack（多物件追蹤）＋ CLIP（樹種比對） |
 | Python 版本 | 3.x |
 
 ### 專案資料夾結構
 
 ```
 project/
-├── app.py
-├── config.py
+├── app.py                       # 建立 Flask app、登記 Blueprint，不含任何路由/查詢邏輯
+├── config.py                    # 所有環境變數與模型參數集中讀取處
 ├── routes/
-│   ├── pages.py
-│   ├── api.py
-│   └── admin.py
+│   ├── pages.py                 # 一般頁面：首頁、/map、/measure
+│   ├── api.py                   # 一般 API：/api/upload、/api/trees、/api/stats
+│   └── admin.py                 # 後台頁面 + 登入／登出／審核 API
 ├── services/
-│   ├── db.py
-│   ├── yolo.py
-│   ├── data_pipeline.py
+│   ├── db.py                    # 所有 SQL 查詢／寫入邏輯，routes/ 一律不可直接查資料庫
+│   ├── data_pipeline.py         # 上傳流程整合入口（run_upload_and_save）
+│   ├── merge_data.py            # RTK／Arduino(ToF) 時間對齊（align_sensor_data）
+│   ├── carbon.py                # 固碳量純計算，不可查資料庫，供上傳流程與 /measure 共用
+│   ├── geo.py                   # 地理座標推算（大圓公式）
+│   ├── species_classifier.py    # YOLO 去背 + CLIP 樹種向量比對
+│   ├── yolo.py                  # ⚠️ 目前沒有任何檔案 import，非管線實際使用的模組
 │   ├── analysis/
-│   │   ├── detector.py
-│   │   ├── tracker.py
-│   │   ├── time_sync.py
-│   │   ├── diameter_calc.py
-│   │   └── visualizer.py
-│   └── parsers/
-│       ├── rtk_parser.py
-│       └── csv_parser.py
+│   │   ├── tracker.py               # ByteTrack 樹幹追蹤（TreeTracker）
+│   │   ├── tree_analysis.py         # IQR 去極端值，寫回 Measurements.Final_Dist_cm
+│   │   ├── tree_coordinate.py       # 依 Final_Dist_cm＋方位角推算樹木座標，寫入 Trees
+│   │   ├── tree_species.py          # 批次樹種辨識（classify_pending_trees）
+│   │   ├── visualizer.py
+│   │   └── bytetrack_custom.yaml
+│   └── measure/                 # /measure 簡易固碳測量頁面用；尚未接上路由（見第 6 節）
+│       ├── models.py
+│       ├── geometry.py
+│       ├── trunk_detector.py
+│       ├── validator.py
+│       ├── pipeline.py
+│       └── visualizer.py
 ├── static/
 │   ├── css/style.css
-│   └── js/
-│       ├── map.js
-│       └── admin.js
+│   ├── js/
+│   │   ├── map.js
+│   │   ├── admin.js
+│   │   ├── dashboard.js
+│   │   └── nav.js
+│   └── measure/
+│       ├── app.js
+│       └── styles.css
 ├── templates/
 │   ├── base.html
 │   ├── index.html
 │   ├── map.html
 │   ├── about.html
+│   ├── measure.html
 │   └── admin/
 │       ├── login.html
-│       └── dashboard.html
+│       ├── dashboard.html
+│       ├── upload.html
+│       └── manage.html
+├── scripts/
+│   └── create_admin.py
+├── sql/                          # 資料庫結構變更紀錄，檔名格式 YYYY-MM-DD_說明.sql
+├── docs/
+│   └── merge_data_update.md
 ├── uploads/
 ├── measured_result/
-└── Tree-Trunk-Segmentation/
-    └── best.pt
+├── Tree-Trunk-Segmentation/
+│   └── best.pt
+└── Tree-Species-Vectors/
+    └── tree_vectors.pkl
 ```
 
 ---
@@ -81,14 +106,14 @@ project/
 
 專案資料夾結構：
   routes/（pages.py、api.py、admin.py）
-  services/（db.py、yolo.py、data_pipeline.py）
-  services/analysis/（detector.py、tracker.py、time_sync.py、diameter_calc.py、visualizer.py）
-  services/parsers/（rtk_parser.py、csv_parser.py）
-  templates/（base.html、index.html、map.html、about.html、admin/login.html、admin/dashboard.html）
-  static/（css/style.css、js/map.js、js/admin.js）
+  services/（db.py、data_pipeline.py、merge_data.py、carbon.py、geo.py、species_classifier.py）
+  services/analysis/（tracker.py、tree_analysis.py、tree_coordinate.py、tree_species.py、visualizer.py）
+  services/measure/（/measure 頁面用，尚未接上路由）
+  templates/（base.html、index.html、map.html、about.html、measure.html、admin/login.html、admin/dashboard.html、admin/upload.html、admin/manage.html）
+  static/（css/style.css、js/map.js、js/admin.js、js/dashboard.js、js/nav.js、measure/app.js、measure/styles.css）
 
-資料表：Sites、Trees、Measurements、Species_Ref、Users
-Measurements 的 status 只能是 pending 或 confirmed
+資料表：Trees、Measurements、Species_Ref、Admins、Camera_Profiles、Sensor_Sync_Records
+Measurements 的 status 資料庫實際存的值是 Pending／Approved（注意大小寫，詳見第 6 節）
 
 請遵守 CONTRIBUTING.md 的開發規範撰寫程式碼。
 ```
@@ -142,28 +167,30 @@ def get_user_by_username(username):
 
 ### 完整 API 清單
 
-| 方法 | 網址 | 說明 | 輸入 | 輸出 |
-|---|---|---|---|---|
-| GET | /api/trees | 所有樹木資料 | 無 | JSON 陣列 |
-| GET | /api/trees/\<id\> | 單棵樹詳細資料 | id（網址） | JSON 實體 |
-| GET | /api/trees?species= | 依樹種篩選 | species（字串） | JSON 陣列 |
-| GET | /api/trees?site= | 依路段篩選 | site（字串） | JSON 陣列 |
-| GET | /api/stats | 首頁統計數字 | 無 | JSON（total_trees, total_carbon） |
-| GET | /api/sites | 所有路段列表 | 無 | JSON 陣列 |
-| POST | /api/upload | 上傳照片辨識 | 照片檔案 | JSON 結果 |
-| POST | /api/admin/login | 登入驗證 | username, password | 成功或 401 |
-| POST | /api/admin/logout | 登出 | 無 | 成功 |
-| GET | /api/admin/trees | 得到所有資料 | 無 | JSON 陣列（含 status） |
-| PUT | /api/admin/trees/\<id\> | 修改審核狀態 | id（網址）, status | 成功或 400 |
-| DELETE | /api/admin/trees/\<id\> | 刪除審核 | id（網址） | 成功或 404 |
+| 方法 | 網址 | 說明 | 輸入 | 輸出 | 需登入 |
+|---|---|---|---|---|---|
+| POST | /api/upload | 上傳 RTK／Arduino(ToF)／影片，執行時間對齊並寫入資料庫 | multipart：rtk_file、arduino_file（必填）、mp4_file（選填） | JSON 結果（見下） | ✅ |
+| GET | /api/trees | 地圖頁用，回傳所有 `Approved` 樹木資料 | 無 | `{success, trees: [...]}` | |
+| GET | /api/stats | 首頁統計數字 | 無 | `{success, total_trees, total_carbon}` | |
+| POST | /api/admin/login | 登入驗證 | `{username, password}` | 成功 200 或 401 | |
+| POST | /api/admin/logout | 登出 | 無 | 成功 200 | |
+| GET | /api/admin/trees | 後台待審核清單（含 `Pending`） | 無 | JSON 陣列（見下） | ✅ |
+| PUT | /api/admin/trees/\<id\> | 更新審核狀態，可一併修正 dbh／carbon | `{status（必填）, dbh?, carbon?}` | 成功或 400 | ✅ |
+| DELETE | /api/admin/trees/\<id\> | 刪除該筆 Measurements 記錄 | id（網址） | 成功或 400 | ✅ |
+| GET | /api/camera-profiles | 拍攝設備清單（上傳頁下拉選單用） | 無 | JSON 陣列 | ✅ |
+
+⚠️ 原規劃的 `/api/trees/<id>`、`/api/trees?species=`、`/api/trees?site=`、`/api/sites` 目前都**尚未實作**。`templates/measure.html` 對應的 `/api/species`、`/api/measure`（見 `static/measure/app.js`）也還沒有對應的路由，`services/measure/` 底下的計算模組目前沒有被任何路由呼叫。要新增以上任一個 API 前，請先跟負責人確認命名與回傳格式。
 
 ### JSON 本體命名規範
 
-前後端統一使用以下本體名稱，**不可自行更改**：
+⚠️ 目前 `/api/trees`（地圖）與 `/api/admin/trees`（後台）兩個端點各自回傳不同的欄位命名，**尚未統一**，新增功能前請先看清楚是要接哪一個端點：
+
+**`/api/admin/trees`**（`services/db.py` 的 `get_all_trees_admin()`）：
 
 ```json
 {
   "id": 1,
+  "tree_id": 3,
   "species": "樟樹",
   "dbh": 35.2,
   "carbon": 12.5,
@@ -171,10 +198,29 @@ def get_user_by_username(username):
   "lng": 121.4546,
   "site": "英專路",
   "status": "pending",
-  "recorded_at": "2026/07/10 14:23",
-  "img": "measured_result/track_1_result.jpg"
+  "recorded_at": "2026-07-10 14:23:00",
+  "img": "data:image/jpeg;base64,..."
 }
 ```
+
+**`/api/trees`**（`services/db.py` 的 `get_tree_map_data()`，只含 `Approved` 資料、不含 `status`）：
+
+```json
+{
+  "record_id": 1,
+  "tree_id": 3,
+  "species_name": "樟樹",
+  "dbh": 35.2,
+  "carbon_absorpation": 12.5,
+  "latitude": 25.1734,
+  "longitude": 121.4546,
+  "site_name": "英專路",
+  "img": "data:image/jpeg;base64,..."
+}
+```
+
+- `img` 一律是資料庫 `image_data`（VARBINARY）轉出來的 data URI（`_img_bin_to_data_uri()`），不是檔案路徑
+- 若要新增欄位或調整命名，先確認是否會影響 `static/js/map.js`、`static/js/admin.js` 既有的讀取方式
 
 ### 回應格式規範
 
@@ -224,50 +270,56 @@ fetch('/api/trees')
 
 ### 資料處理管線順序（時間先後）
 
+實際入口是 `services/data_pipeline.py` 的 `run_upload_and_save()`（`/api/upload` 呼叫它，不是文件命名相近的 `process_upload()`）：
+
 1. 使用者上傳 RTK / Arduino(ToF) / 影片三個檔案（`/api/upload`）
 2. **時間對齊**：`services/merge_data.py` 的 `align_sensor_data()`，把 Arduino(ToF) 跟 RTK 依時間戳記對齊，算出每筆資料對應影片第幾毫秒（`video_offset_ms`）
-3. **影片切幀**：依 ToF 取樣間隔（500ms）把影片切成一張張照片，用 `video_offset_ms` 對回步驟 2 對齊好的資料，取得該幀對應的 ToF 距離、RTK 座標
-4. **多物件追蹤**：`services/analysis/tracker.py` 對每一幀跑 YOLO-seg + ByteTrack，輸出每幀的 `track_id`（同一棵樹全程不變）與 `pixel_width`（像素寬度，尚非公分）
-5. **樹徑換算**：同一個 `track_id` 的多幀資料，依「樹徑計算邏輯」（見下方）算出這棵樹最終的樹徑（cm）
-6. **座標換算**：依「樹木座標計算邏輯」（見下方）算出這棵樹的真實座標
-7. **寫入資料庫**：呼叫 `save_pipeline_record()`，內部呼叫 `_get_or_create_tree_id()` 比對/建立 `Tree_ID`，寫入一筆 `Measurements`，`status` 固定為 `Pending`
-8. **後台審核**：管理員在「數據管理維護」頁面確認，`status` 改為 `Approved` 後才會出現在地圖／資料表頁面
+3. **多物件追蹤 + 影格截圖**：對整支影片跑一次 `TreeTracker`（`services/analysis/tracker.py`，YOLO-seg + ByteTrack），取得每幀的 `track_id`、`pixel_width`；再用 `video_offset_ms` 換算回幀號，把對到的 `track_id`／`pixel_width` 與該時間點的影格截圖（JPEG）配回步驟 2 對齊好的每一筆資料
+4. **寫入原始量測**：`save_time_synced_measurements()` 把每筆（含 track_id、pixel_width、影格截圖、RTK 座標、HEADING 等）寫入 `Measurements`，`status` 固定為 `Pending`
+5. **去極端值**：`services/analysis/tree_analysis.py` 的 `analyze_and_write_final_distances()`，依 `site_name + track_id` 分群（沒有 track_id 的舊式資料才退回用時間間隔分群），對群內 ToF 距離做 IQR 去極端值，代表列的距離寫回 `Measurements.Final_Dist_cm`
+6. **座標換算**：`services/analysis/tree_coordinate.py` 的 `recalculate_tree_coordinates()`，用推車 RTK 座標＋`HEADING`＋`Final_Dist_cm`（`services/geo.py` 的大圓公式）算出樹木真實座標，寫入／更新 `Trees`，並把該筆 `Measurements.Tree_ID` 導向正確的 `Tree_ID`
+7. **樹種辨識**：`services/analysis/tree_species.py` 的 `classify_pending_trees()`，對剛才算出真實 `Tree_ID` 的樹跑 YOLO 去背 + CLIP 樹種向量比對（`services/species_classifier.py`），信心度不足時 `Trees.species_id` 留空
+8. **後台審核**：管理員在「數據管理維護」頁面（`/admin/manage`）確認，`status` 改為 `Approved` 後才會出現在地圖／首頁統計
 
-⚠️ 步驟 3～6（切幀腳本、樹徑/座標換算邏輯）目前**尚未實作**，`services/data_pipeline.py` 的 `process_upload()` 仍是空殼，是整合以上步驟的入口函式。
+⚠️ **樹徑（DBH）換算尚未接上管線**：`pixel_width → 公分` 需要的 k 值（cm/pixel）要用已知直徑物體在已知距離實際拍照校正相機硬體，**目前尚未校正**，所以 `Measurements.dbh`／`carbon_absorpation` 不會被管線自動算出，須由管理員在後台審核時透過 `PUT /api/admin/trees/<id>` 手動填入。`services/carbon.py` 的固碳量公式已完成，等 dbh 有值即可直接呼叫。
+
+⚠️ `services/data_pipeline.py` 裡的 `process_upload()` 仍是 `raise NotImplementedError` 的空殼，**不是**目前實際使用的入口，不要被相似的函式名稱誤導。
 
 - 所有查詢邏輯統一寫在 `services/db.py`，**不可在 routes/ 裡直接查資料庫**
 - ⚠️ **`Measurements.status` 資料庫實際存的值是 `'Pending'` / `'Approved'`**（注意大小寫，跟本文件其他地方寫的 `pending`/`confirmed` 不同字）。後端 API 回傳給前端時統一轉換成小寫 `pending`／`confirmed` 對外，但**寫入資料庫時要用資料庫實際接受的 `'Pending'`/`'Approved'`**，比對時建議用 `LOWER(status) = 'pending'` 這種不分大小寫的寫法，避免大小寫不一致造成查詢漏資料
+- 資料表現況：`Sites`、`Biomass_Parameters`、`tree_records` 已被刪除（`site_name` 併入 `Measurements`、異速生長參數併入 `Species_Ref`），目前實際存在的表為 `Trees`、`Measurements`、`Species_Ref`、`Admins`、`Camera_Profiles`、`Sensor_Sync_Records`；異動歷史見 `sql/` 底下依日期命名的 `.sql` 檔
 - 欄位命名對照（依實際資料庫為準）：
 
 | 資料表 | 欄位 | 說明 |
 |---|---|---|
-| Trees | tracker_id | `NOT NULL`。ByteTrack 追蹤編號，是目前判斷「同一棵樹」的主要依據（見下方「樹木身分比對邏輯」） |
+| Trees | tracker_id | `NOT NULL`。目前直接沿用該樹的 `track_id` 當值；沒有 track_id 的舊式資料才自動遞增取號（見下方「樹木身分比對邏輯」） |
 | Trees | LATITUDE N/S / LONGITUDE E/W | 樹木座標欄位，字串格式（如 `"25.0883747N"`），需用 `_parse_coord()` 轉成數字，S/W 為負值 |
+| Trees | species_id | 樹種辨識結果，`tree_species.classify_pending_trees()` 寫入，信心不足時為 `NULL` |
 | Measurements | status | `Pending` / `Approved`（注意大小寫） |
-| Measurements | dbh | 樹徑（公分） |
+| Measurements | site_name | 匯入批次名稱，預設取上傳影片檔名（去副檔名） |
+| Measurements | track_id / Final_Dist_cm | 追蹤編號、IQR 去極端值後的代表距離，是座標換算與 Tree_ID 比對的依據 |
+| Measurements | dbh | 樹徑（公分），目前僅能由後台手動填入 |
 | Measurements | carbon_absorpation | 固碳量 |
 | Measurements | image_data | 樹木照片二進位（VARBINARY），用 `_img_bin_to_data_uri()` 轉成前端可用的 data URI，不寫檔到 static/img/ |
-| Species_Ref | allo_param_a / allo_param_b | 異速生長方程式參數（`biomass = a × dbh^b`）。規劃併入 `Species_Ref`，不要另開新表 |
+| Species_Ref | allo_param_a / allo_param_b | 異速生長方程式參數（`biomass = a × dbh^b`），已併入 `Species_Ref`（原 `Biomass_Parameters` 表已刪除） |
 
 ### 樹木身分比對邏輯（Tree_ID）
 
-- **同一次匯入（同一段影片）內**：用 `tracker_id` 判斷是不是同一棵樹。同一個 `tracker_id` 第二次出現 = 同一棵樹的另一次測量，共用同一個 `Tree_ID`（見 `services/db.py` 的 `_get_or_create_tree_id()`）
-- ⚠️ **跨次匯入必須做 offset**：`tracker_id` 只在單一次追蹤（單一影片）裡唯一，每次重新追蹤都從頭編號。匯入前必須先查詢資料庫目前最大的 `tracker_id`，把這次所有的 track_id 加上這個 offset，才能保證跨批匯入不會撞號、被誤判成同一棵樹
-- **跨次辨識同一棵實體樹**（例如下個月複測同一條路，是否認得出是同一棵樹）：**尚未實作**。規劃是改用樹木座標比對（找資料庫裡座標相近的既有 `Tree_ID`），而不是比對 `tracker_id`（`tracker_id` 無法跨次沿用）。需等下方「樹木座標計算邏輯」完成後才能接上
+- **同一次匯入（同一段影片）內**：用 `track_id` 判斷是不是同一棵樹，配對邏輯見上方「去極端值」步驟（`tree_analysis._assign_tree_key()`，依 `site_name + track_id` 分群）
+- **座標換算階段的去重**：`tree_coordinate.recalculate_tree_coordinates()` 呼叫 `db_service.find_linked_tree_id(site_name, track_id)`，同一個 `site_name + track_id` 組合已經算過真實座標就沿用既有 `Tree_ID`，否則才新增一筆 `Trees`（`tracker_id` 直接設為該筆的 `track_id`）。這解決了重跑管線導致 `Trees` 重複新增的問題
+- ⚠️ **跨次辨識同一棵實體樹**（例如下個月複測同一條路，能否認出是同一棵樹）：**尚未實作**。`track_id` 每次重新追蹤都從頭編號，不能跨次沿用；規劃是改用樹木座標比對（找資料庫裡座標相近的既有 `Tree_ID`），目前 `insert_tree_coordinate()` 對每筆符合條件的量測都是直接新增新 `Trees` 記錄，還沒有這層比對
+- 沒有 `track_id` 的舊式資料（純 ToF、無影片追蹤）沒有可靠欄位判斷「同一棵樹」，目前每次都會新增一筆，重複問題只在有 `track_id` 的資料上被解決
 
 ### 樹徑計算邏輯
 
-1. `services/analysis/tracker.py` 對每一幀輸出 `pixel_width`（分割遮罩量出的像素寬度，**還不是公分**）
-2. 同一個 `tracker_id` 通常會有多幀資料（例如 10 幀），對各幀配對到的 **ToF 距離** 做 IQR 去除離群值，取代表性距離（如中位數）
-3. 在原始資料裡找出**實際距離最接近代表值的那一筆真實紀錄**（不是用合成值），取該筆自己的 `pixel_width` 與距離
-4. `真正樹徑(cm) = pixel_width × k值`，k值（cm/pixel）隨距離變化，且需要用已知直徑物體在已知距離實際拍照校正相機硬體才能得到，**目前尚未校正**
+1. `services/analysis/tracker.py` 對每一幀輸出 `pixel_width`（分割遮罩量出的像素寬度，**還不是公分**），`data_pipeline.run_upload_and_save()` 已經把它配對回每筆 `Measurements`
+2. 同一個 `track_id` 通常會有多幀資料，對各幀配對到的 **ToF 距離** 做 IQR 去除離群值，取代表性距離（`tree_analysis.py` 已實作此步驟，寫回 `Final_Dist_cm`）
+3. `真正樹徑(cm) = pixel_width × k值`，k值（cm/pixel）隨距離變化，且需要用已知直徑物體在已知距離實際拍照校正相機硬體才能得到，**目前尚未校正**，所以最後這一步（把 `pixel_width` 換算成 `dbh` 並寫回資料庫）**尚未實作**
 
 ### 樹木座標計算邏輯
 
-- ⚠️ **目前資料庫存的座標是拍攝當下的原始 RTK 座標（車輛位置），不是樹木實際位置**，校正邏輯尚未實作
-- 規劃邏輯：感測器與車輛前進方向垂直（90 度）安裝，樹木真實座標 = 拍攝點座標，往感測器朝向那一側，依「方位角(HEADING) ± 90 度」的方向，偏移「ToF 距離」那麼遠（標準地理座標平移公式）
-- `Measurements` 已有 `HEADING`、`ToF_Dist1_cm`／`ToF_Dist2_cm` 欄位，**不需要新增資料庫欄位**，只需要在寫入 `Trees` 前補上這段計算邏輯，並讓 `_get_or_create_tree_id()` 多接收一個 `heading` 參數
-- 感測器朝哪一側（左/右）是固定的硬體安裝方式，建議存在 `config.py` 當常數，不需要資料庫欄位
+- 已實作：`services/geo.py` 的大圓公式，感測器與車輛前進方向垂直安裝，樹木真實座標 = 拍攝點座標，往感測器朝向那一側，依「方位角(HEADING) ± 90 度」的方向，偏移 `Final_Dist_cm` 那麼遠，由 `tree_coordinate.recalculate_tree_coordinates()` 呼叫並寫回 `Trees`
+- 感測器朝哪一側（左/右）是固定的硬體安裝方式，若尚未存在 `config.py` 常數，新增時不需要對應的資料庫欄位
 
 ---
 
