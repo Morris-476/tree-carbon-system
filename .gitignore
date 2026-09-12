@@ -14,8 +14,7 @@ __pycache__/
 *.pyd
 .Python
 
-# 模型權重（體積大，用 Git LFS 或另行管理）
-*.pt
+# 模型權重（*.pt 改用 Git LFS 追蹤，見 .gitattributes，不再排除）
 *.pth
 *.onnx
 
