@@ -788,6 +788,7 @@ def get_all_trees_admin():
                 m.[TIME]       AS measure_time
             FROM v_AdminPendingQueue v
             JOIN Measurements m ON m.record_id = v.紀錄編號
+            WHERE m.Final_Dist_cm IS NOT NULL
         """)
         columns = [col[0] for col in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
