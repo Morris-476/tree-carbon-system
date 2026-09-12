@@ -160,6 +160,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let trees = [];
 
+    // 2026/09/12新增：雙擊編輯樹種／樹徑，暫存在畫面上，跟著「確認」一起送出，
+    // 不會每改一次就打一次 API。key 是 tree.id，value 是 {species?, dbh?}。
+    const pendingEdits = {};
+
     // 張恆輔 8/25新增：樹種清單，「未知」為預設值（species 尚未辨識時顯示）
     const speciesOptions = ['未知', '龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉'];
 
@@ -189,7 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${tree.id}</td>
                 <td>${tree.tree_id}</td>
                 <td><select class="species-select">${speciesOptionsHtml}</select></td>
-                <td>${tree.dbh}</td>
+                <td class="editable-cell" data-field="dbh">${tree.dbh}</td>
                 <td>${tree.carbon}</td>
                 <td>${tree.lat}, ${tree.lng}</td>
                 <td>${tree.site}</td>
@@ -227,6 +231,50 @@ document.addEventListener('DOMContentLoaded', () => {
         modal.hidden = false;
     };
 
+    // 2026/09/12新增：雙擊樹徑儲存格，換成輸入框讓管理員修改。
+    // 失焦或按 Enter 時把新值存進 pendingEdits，畫面文字跟著換成新值，
+    // 但還不會打 API——要等按下「確認」才會真的送出。
+    tbody.addEventListener('dblclick', (event) => {
+        const cell = event.target.closest('.editable-cell[data-field="dbh"]');
+        if (!cell || cell.querySelector('input')) return;
+
+        const row = cell.closest('tr');
+        const id = Number(row.dataset.id);
+        const originalValue = cell.textContent.trim();
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = '0.01';
+        input.className = 'cell-input';
+        input.value = originalValue;
+
+        const finishEdit = () => {
+            const newValue = input.value.trim();
+            cell.textContent = newValue;
+            if (newValue !== '' && Number(newValue) !== Number(originalValue)) {
+                pendingEdits[id] = { ...pendingEdits[id], dbh: Number(newValue) };
+            }
+        };
+
+        input.addEventListener('blur', finishEdit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') input.blur();
+        });
+
+        cell.textContent = '';
+        cell.appendChild(input);
+        input.focus();
+        input.select();
+    });
+
+    // 2026/09/12新增：樹種下拉選單改變時，先暫存，跟樹徑一樣等「確認」才送出
+    tbody.addEventListener('change', (event) => {
+        if (!event.target.classList.contains('species-select')) return;
+        const row = event.target.closest('tr');
+        const id = Number(row.dataset.id);
+        pendingEdits[id] = { ...pendingEdits[id], species: event.target.value };
+    });
+
     tbody.addEventListener('click', (event) => {
         const target = event.target;
         const row = target.closest('tr');
@@ -240,14 +288,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // 負責人：陳政雍 8/27 串接確認／刪除 API
+        // 2026/09/12修改：把 pendingEdits 裡暫存的樹種／樹徑修改一起送出，
+        // 後端會用最新的樹徑＋樹種重新算一次固碳量。
         if (target.dataset.action === 'confirm') {
             fetch(`/api/admin/trees/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'Approved' })
+                body: JSON.stringify({ status: 'Approved', ...pendingEdits[id] })
             })
                 .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
-                .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
+                .then(() => {
+                    delete pendingEdits[id];
+                    trees = trees.filter((tree) => tree.id !== id);
+                    renderTrees();
+                })
                 .catch((err) => { console.error(err); alert('確認失敗，請稍後再試'); });
             return;
         }
