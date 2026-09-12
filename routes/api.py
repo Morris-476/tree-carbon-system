@@ -43,10 +43,26 @@ def api_upload():
         video_path = os.path.join(upload_dir, mp4_file.filename)
         mp4_file.save(video_path)
 
+    # 負責人：Morris，開發日期：2026/09/12
+    # 拍攝設備焦距／感光元件寬度，來自資料上傳頁的下拉選單／手動輸入欄位
+    # （見 templates/admin/upload.html），供樹徑換算公式使用。沒有選、
+    # 或影片本身沒有偵測到樹時，樹徑算不出來，dbh 仍會維持 0。
+    def _parse_positive_float(raw):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    focal_mm = _parse_positive_float(request.form.get('focal_mm'))
+    sensor_width_mm = _parse_positive_float(request.form.get('sensor_width'))
+
     result = data_pipeline.run_upload_and_save(
         rtk_file_path=rtk_path,
         csv_file_path=arduino_path,
         video_path=video_path,
+        focal_mm=focal_mm,
+        sensor_width_mm=sensor_width_mm,
     )
 
     if result['status'] != 'success':

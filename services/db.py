@@ -329,6 +329,13 @@ def _ensure_measurement_columns(cursor):
         # 供之後 IQR 篩選＋樹徑換算使用，這裡先只負責存起來。
         'track_id': 'INT NULL',
         'pixel_width': 'INT NULL',
+        # 負責人：Morris，開發日期：2026/09/12
+        # 樹徑換算公式需要的另外兩個輸入：mask_width 是量出 pixel_width
+        # 當下那張遮罩的寬度；focal_mm／sensor_width_mm 是這次上傳時
+        # 選擇的拍攝設備規格，整批共用同一組值。
+        'mask_width': 'INT NULL',
+        'focal_mm': 'DECIMAL(6,2) NULL',
+        'sensor_width_mm': 'DECIMAL(6,2) NULL',
     }
     for name, ddl in columns.items():
         cursor.execute(
@@ -533,6 +540,108 @@ def update_tree_species(tree_id, species_id) -> None:
         conn.close()
 
 
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_diameter.py 使用，找出「已經有代表距離
+# （Final_Dist_cm），但樹徑（dbh）還沒算出來」的代表紀錄。
+def get_measurements_needing_diameter() -> list:
+    """回傳 [{'record_id', 'pixel_width', 'mask_width', 'distance_cm',
+    'focal_mm', 'sensor_width_mm'}, ...]，dbh 還是 0、且換算需要的欄位都
+    齊全的代表紀錄。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢待換算樹徑的紀錄')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                record_id,
+                pixel_width,
+                mask_width,
+                Final_Dist_cm AS distance_cm,
+                focal_mm,
+                sensor_width_mm
+            FROM Measurements
+            WHERE dbh = 0
+              AND Final_Dist_cm IS NOT NULL
+              AND pixel_width IS NOT NULL
+              AND mask_width IS NOT NULL
+              AND focal_mm IS NOT NULL
+              AND sensor_width_mm IS NOT NULL
+        """)
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_measurement_dbh(record_id, dbh) -> None:
+    """把換算出的樹徑寫回 Measurements.dbh。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法寫回 Measurements.dbh')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Measurements SET dbh = ? WHERE record_id = ?',
+            dbh, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_carbon.py 使用，找出「樹種已辨識、樹徑
+# 已算出，但固碳量還沒算」的代表紀錄，一併查出樹種的固碳係數。
+def get_measurements_needing_carbon() -> list:
+    """回傳 [{'record_id', 'dbh', 'allo_param_a', 'allo_param_b',
+    'carbon_fraction'}, ...]，carbon_absorpation 還是 0、且已經有
+    dbh 與樹種固碳係數可用的代表紀錄。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢待計算固碳量的紀錄')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                m.record_id,
+                m.dbh,
+                s.allo_param_a,
+                s.allo_param_b,
+                s.carbon_fraction
+            FROM Measurements m
+            JOIN Trees t ON t.Tree_ID = m.Tree_ID
+            JOIN Species_Ref s ON s.species_id = t.species_id
+            WHERE m.carbon_absorpation = 0
+              AND m.dbh > 0
+              AND s.allo_param_a IS NOT NULL
+              AND s.allo_param_b IS NOT NULL
+              AND s.carbon_fraction IS NOT NULL
+        """)
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_measurement_carbon(record_id, biomass, carbon_absorpation) -> None:
+    """把算出的生質量、固碳量寫回 Measurements。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法寫回 Measurements 固碳量')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Measurements SET biomass = ?, carbon_absorpation = ? WHERE record_id = ?',
+            biomass, carbon_absorpation, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def save_time_synced_measurements(records: list, site_name) -> dict:
     """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
     整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
@@ -571,8 +680,8 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 'latitude, longitude, SPEED, HEADING, TAG, HEIGHT, '
                 'Laser_Status, LED_Status, ToF_Dist1_cm, ToF_Dist2_cm, '
                 'gnss_gap_ms, video_offset_ms, site_name, image_data, '
-                'track_id, pixel_width'
-                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'track_id, pixel_width, mask_width, focal_mm, sensor_width_mm'
+                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 tree_id, 0, 0, 0, 'Pending',
                 recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
                 r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
@@ -580,7 +689,8 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 r['laser_status'], r['led_status'],
                 int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
                 r['gnss_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
-                r.get('track_id'), r.get('pixel_width'),
+                r.get('track_id'), r.get('pixel_width'), r.get('mask_width'),
+                r.get('focal_mm'), r.get('sensor_width_mm'),
             )
         conn.commit()
         return {'status': 'success', 'inserted': len(records), 'tree_id': tree_id}
