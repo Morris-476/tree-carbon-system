@@ -48,6 +48,7 @@ from services import db as db_service
 from services.analysis.tracker import TreeTracker
 from services.analysis import tree_analysis
 from services.analysis.tree_coordinate import recalculate_tree_coordinates
+from services.analysis.tree_species import classify_pending_trees
 import config
 
 
@@ -233,6 +234,12 @@ def run_upload_and_save(
     # 讓每次上傳資料後 Measurements.Final_Dist_cm 與 Trees 座標都能跟著更新。
     tree_analysis.analyze_and_write_final_distances(verbose=False, save_csv=False)
     recalculate_tree_coordinates()
+
+    # 2026/09/12新增：樹種辨識依賴上一步算出的正確 Tree_ID，所以排在
+    # recalculate_tree_coordinates() 之後執行；沒有真實座標的樹（例如
+    # RTK 還沒定位成功那幾筆）不會出現在待判定清單裡，之後座標補上了
+    # 再重新上傳一次就會處理到，不需要額外邏輯。
+    classify_pending_trees()
 
     result['inserted'] = save_result['inserted']
     result['tree_id'] = save_result['tree_id']
