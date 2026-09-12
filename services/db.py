@@ -74,6 +74,25 @@ def _get_or_create_species(cursor, species_name: str) -> int:
     return cursor.fetchone()[0]
 
 
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_species.py 使用，_get_or_create_species()
+# 需要一個已開好的 cursor，是給 db.py 內部函式用的私有輔助函式，這支包成
+# 獨立連線的公開版本，讓批次腳本不用自己碰 cursor。
+def get_or_create_species_id(species_name: str) -> int:
+    """查詢/新增 Species_Ref，回傳 species_id。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢/新增樹種')
+    try:
+        cursor = conn.cursor()
+        species_id = _get_or_create_species(cursor, species_name)
+        conn.commit()
+        return species_id
+    finally:
+        conn.close()
+
+
 # 張恆輔 8/30修正：這個函式之前被重複定義了兩次（第二份多帶 site_id），
 # Python 會讓後面那份蓋掉前面，前面那份是永遠不會被呼叫到的死代碼，故刪除，
 # 只留下面這份完整版本。
@@ -457,6 +476,57 @@ def link_measurement_to_tree(record_id, tree_id) -> None:
         cursor.execute(
             'UPDATE Measurements SET Tree_ID = ? WHERE record_id = ?',
             tree_id, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_species.py 使用，找出還沒判定樹種、
+# 但有截圖可用的樹。同一棵樹可能對到好幾筆 Measurements，優先取有
+# Final_Dist_cm 的代表紀錄（跟 tree_coordinate.py 用同一筆），沒有才退回
+# 任一筆有截圖的紀錄。
+def get_trees_needing_species() -> list:
+    """回傳 [{'tree_id': int, 'image_data': bytes}, ...]，species_id 還是
+    NULL、且找得到截圖的樹，一棵樹只回傳一筆代表截圖。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢待判定樹種的樹')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Tree_ID, image_data FROM (
+                SELECT
+                    t.Tree_ID,
+                    m.image_data,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.Tree_ID
+                        ORDER BY CASE WHEN m.Final_Dist_cm IS NOT NULL THEN 0 ELSE 1 END, m.record_id
+                    ) AS rn
+                FROM Trees t
+                JOIN Measurements m ON m.Tree_ID = t.Tree_ID
+                WHERE t.species_id IS NULL AND m.image_data IS NOT NULL
+            ) ranked
+            WHERE rn = 1
+        """)
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_tree_species(tree_id, species_id) -> None:
+    """把辨識出的樹種寫回 Trees.species_id。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法寫回 Trees 樹種')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Trees SET species_id = ? WHERE Tree_ID = ?',
+            species_id, tree_id
         )
         conn.commit()
     finally:
