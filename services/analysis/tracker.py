@@ -101,8 +101,8 @@ class TreeTracker:
                 if self._hit_counts[track_id] < self.min_hits:
                     continue
 
-                pixel_width = (
-                    self._calc_pixel_width(masks, i) if masks is not None else None
+                pixel_width, mask_width = (
+                    self._calc_pixel_width(masks, i) if masks is not None else (None, None)
                 )
 
                 output.append(
@@ -110,6 +110,10 @@ class TreeTracker:
                         "frame": self._frame_idx,
                         "track_id": track_id,
                         "pixel_width": pixel_width,
+                        # mask_width：量出 pixel_width 當下那張遮罩的座標系寬度，
+                        # 樹徑換算公式需要「像素寬度佔整張圖的比例」，兩者必須
+                        # 用同一個座標系，所以要跟著 pixel_width 一起往下傳。
+                        "mask_width": mask_width,
                     }
                 )
 
@@ -125,29 +129,35 @@ class TreeTracker:
     TRUNK_MEASURE_HEIGHT_RATIO = 0.15
 
     @classmethod
-    def _calc_pixel_width(cls, masks, index: int) -> Optional[int]:
+    def _calc_pixel_width(cls, masks, index: int) -> tuple[Optional[int], Optional[int]]:
         """
         用分割遮罩計算樹幹在量測線上的像素寬度。
         量測線（measure_y）取偵測範圍底部往上 TRUNK_MEASURE_HEIGHT_RATIO
         比例的位置（比正中點更接近地面/樹幹基部），在該行找出遮罩為真的
         最左/最右 x 座標，回傳寬度（像素）。
 
-        找不到有效遮罩、或該行沒有像素時，回傳 None（呼叫端需自行處理 None）。
+        回傳 (pixel_width, mask_width)：mask_width 是這張遮罩本身的寬度
+        （masks.data 是模型輸出解析度，不等於原始影格寬度），供樹徑換算
+        公式計算「像素寬度佔整張圖的比例」時使用，兩者必須來自同一張遮罩。
+
+        找不到有效遮罩、或該行沒有像素時，回傳 (None, None)（呼叫端需自行處理）。
         """
         try:
             mask_array = masks.data[index].cpu().numpy()  # shape: (H, W)
         except (IndexError, AttributeError):
-            return None
+            return None, None
+
+        mask_width = mask_array.shape[1]
 
         ys, xs = np.where(mask_array > 0.5)
         if len(ys) == 0:
-            return None
+            return None, mask_width
 
         y_min, y_max = int(ys.min()), int(ys.max())
         measure_y = int(y_max - (y_max - y_min) * cls.TRUNK_MEASURE_HEIGHT_RATIO)
         row_xs = xs[ys == measure_y]
         if len(row_xs) == 0:
-            return None
+            return None, mask_width
 
         x_start, x_end = int(row_xs.min()), int(row_xs.max())
-        return x_end - x_start
+        return x_end - x_start, mask_width

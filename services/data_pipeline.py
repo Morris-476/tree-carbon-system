@@ -48,7 +48,9 @@ from services import db as db_service
 from services.analysis.tracker import TreeTracker
 from services.analysis import tree_analysis
 from services.analysis.tree_coordinate import recalculate_tree_coordinates
+from services.analysis.tree_diameter import calculate_pending_diameters
 from services.analysis.tree_species import classify_pending_trees
+from services.analysis.tree_carbon import calculate_pending_carbon
 import config
 
 
@@ -157,9 +159,12 @@ def run_upload_and_save(
     video_path: Optional[str] = None,
     video_start_at: Optional[datetime] = None,
     max_rtk_gap_seconds: int = 3,
+    focal_mm: Optional[float] = None,
+    sensor_width_mm: Optional[float] = None,
 ) -> dict:
     """
-    資料上傳頁的完整流程：時間對齊 → 每筆抓對應時間點的影片截圖 → 寫入 dbo.Measurements。
+    資料上傳頁的完整流程：時間對齊 → 每筆抓對應時間點的影片截圖 → 寫入 dbo.Measurements
+    → 距離 IQR → 座標 → 樹徑 → 樹種 → 固碳（後五步依序自動執行，見函式尾端）。
     對齊邏輯直接呼叫 align_sensor_data()，完全沒有更動；這裡只負責截圖與寫入資料庫。
 
     site_name 自動取影片檔名（去掉副檔名），例如 IMG_4631.MOV -> "IMG_4631"。
@@ -171,6 +176,9 @@ def run_upload_and_save(
         video_path:            影片路徑；有給的話才會截圖
         video_start_at:        影片第 0 影格的真實時間，未提供時由 merge_data 自動推算
         max_rtk_gap_seconds:   RTK 與 Arduino 紀錄的最大容忍時間差（秒）
+        focal_mm:              拍攝設備焦距（mm），來自資料上傳頁選的機型／手動輸入；
+                               沒提供時樹徑算不出來，dbh 維持 0
+        sensor_width_mm:       拍攝設備感光元件寬度（mm），同上
 
     Returns:
         dict：對齊失敗時同 align_sensor_data() 的錯誤格式；
@@ -216,30 +224,43 @@ def run_upload_and_save(
                 best = max(detections, key=lambda d: d['pixel_width'] or 0)
                 record['track_id'] = best['track_id']
                 record['pixel_width'] = best['pixel_width']
+                record['mask_width'] = best['mask_width']
             else:
                 record['track_id'] = None
                 record['pixel_width'] = None
+                record['mask_width'] = None
+            record['focal_mm'] = focal_mm
+            record['sensor_width_mm'] = sensor_width_mm
     else:
         for record in result['records']:
             record['image_data'] = None
             record['track_id'] = None
             record['pixel_width'] = None
+            record['mask_width'] = None
+            record['focal_mm'] = focal_mm
+            record['sensor_width_mm'] = sensor_width_mm
 
     save_result = db_service.save_time_synced_measurements(result['records'], site_name)
     if save_result['status'] != 'success':
         return {'status': 'error', 'message': save_result['message']}
 
-    # 樹徑換算（IQR 篩選 + k值）仍待負責人補上；這裡先接上既有的
-    # IQR 去極端值（tree_analysis）與座標換算（tree_coordinate），
-    # 讓每次上傳資料後 Measurements.Final_Dist_cm 與 Trees 座標都能跟著更新。
+    # 2026/09/12新增：完整補上距離 → 座標 → 樹徑 → 樹種 → 固碳的自動流程，
+    # 順序不可任意調動：
+    #   ① 距離 IQR（tree_analysis）：篩出每棵樹的代表紀錄與代表距離
+    #   ② 座標（tree_coordinate）：算出真實座標，同時把代表紀錄的
+    #      Measurements.Tree_ID 從上傳當下的佔位值改成正確的真實 Tree_ID
+    #   ③ 樹徑（tree_diameter）：用代表紀錄的像素寬度＋代表距離換算 dbh，
+    #      只需要①的結果，不依賴②
+    #   ④ 樹種（tree_species）：必須排在②之後——判斷「這棵樹辨識過了嗎」
+    #      是透過 Measurements.Tree_ID 對應到 Trees，佔位 Tree_ID 還沒被
+    #      ②修正的話，樹種會被誤寫到錯的樹上
+    #   ⑤ 固碳（tree_carbon）：需要③的 dbh 與④辨識出的樹種固碳係數，
+    #      兩者都好了才能算，必須排最後
     tree_analysis.analyze_and_write_final_distances(verbose=False, save_csv=False)
     recalculate_tree_coordinates()
-
-    # 2026/09/12新增：樹種辨識依賴上一步算出的正確 Tree_ID，所以排在
-    # recalculate_tree_coordinates() 之後執行；沒有真實座標的樹（例如
-    # RTK 還沒定位成功那幾筆）不會出現在待判定清單裡，之後座標補上了
-    # 再重新上傳一次就會處理到，不需要額外邏輯。
+    calculate_pending_diameters()
     classify_pending_trees()
+    calculate_pending_carbon()
 
     result['inserted'] = save_result['inserted']
     result['tree_id'] = save_result['tree_id']
