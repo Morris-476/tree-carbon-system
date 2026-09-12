@@ -419,6 +419,50 @@ def insert_tree_coordinate(latitude, longitude, tracker_id=None) -> int:
         conn.close()
 
 
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：修正 tree_coordinate.py 每次上傳都重新新增重複 Trees 記錄的 bug。
+# 判斷「這個 site_name + track_id 組合是不是已經算過真實座標」，用 Trees.tracker_id
+# 是否等於這筆量測自己的 track_id 判斷（真實座標新增時 tracker_id 就是設成
+# 這個值，上傳當下的佔位 Tree 則不是），避免不同影片剛好 track_id 撞號也被
+# 誤判成同一棵樹。track_id 為 None（舊式無追蹤資料）時無法用這個方式判斷，
+# 呼叫端不應該對這種資料呼叫本函式。
+def find_linked_tree_id(site_name, track_id):
+    """回傳已經算過真實座標、且 tracker_id 對得上的 Tree_ID；找不到回傳 None。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢既有 Tree_ID')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 1 m.Tree_ID
+            FROM Measurements m
+            JOIN Trees t ON t.Tree_ID = m.Tree_ID
+            WHERE m.site_name = ? AND m.track_id = ? AND t.tracker_id = m.track_id
+        """, site_name, track_id)
+        row = cursor.fetchone()
+        return row[0] if row is not None else None
+    finally:
+        conn.close()
+
+
+def link_measurement_to_tree(record_id, tree_id) -> None:
+    """把代表紀錄的 Measurements.Tree_ID 改成算出真實座標後對應的 Tree_ID，
+    取代上傳當下寫入的佔位 Tree_ID。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法更新 Measurements.Tree_ID')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Measurements SET Tree_ID = ? WHERE record_id = ?',
+            tree_id, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def save_time_synced_measurements(records: list, site_name) -> dict:
     """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
     整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
