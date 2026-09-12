@@ -116,12 +116,21 @@ class TreeTracker:
         self._frame_idx += 1
         return output
 
-    @staticmethod
-    def _calc_pixel_width(masks, index: int) -> Optional[int]:
+    # 2026/09/12修正：量測線原本取整個偵測範圍（含樹冠）垂直方向的正中點，
+    # 但拍攝到的多半是全株入鏡（樹冠佔畫面比例遠大於樹幹），正中點常常落在
+    # 樹冠中段，量到的是枝葉寬度、不是樹幹寬度，導致同一棵樹在不同影格量出
+    # 的寬度大幅跳動。改成偵測範圍底部往上一小段比例，比較接近實際樹幹位置。
+    # 這仍然是沒有標定過真實高度的權宜做法，等相機校正常數（k值）確定後，
+    # 應該改用 services/measure/geometry.py 那種以真實高度（1.3m）回推的方式。
+    TRUNK_MEASURE_HEIGHT_RATIO = 0.15
+
+    @classmethod
+    def _calc_pixel_width(cls, masks, index: int) -> Optional[int]:
         """
         用分割遮罩計算樹幹在量測線上的像素寬度。
-        量測線（measure_y）取遮罩垂直範圍的中點，
-        在該行找出遮罩為真的最左/最右 x 座標，回傳寬度（像素）。
+        量測線（measure_y）取偵測範圍底部往上 TRUNK_MEASURE_HEIGHT_RATIO
+        比例的位置（比正中點更接近地面/樹幹基部），在該行找出遮罩為真的
+        最左/最右 x 座標，回傳寬度（像素）。
 
         找不到有效遮罩、或該行沒有像素時，回傳 None（呼叫端需自行處理 None）。
         """
@@ -134,7 +143,8 @@ class TreeTracker:
         if len(ys) == 0:
             return None
 
-        measure_y = int((ys.min() + ys.max()) / 2)
+        y_min, y_max = int(ys.min()), int(ys.max())
+        measure_y = int(y_max - (y_max - y_min) * cls.TRUNK_MEASURE_HEIGHT_RATIO)
         row_xs = xs[ys == measure_y]
         if len(row_xs) == 0:
             return None
