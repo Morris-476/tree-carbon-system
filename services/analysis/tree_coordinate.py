@@ -18,13 +18,13 @@ import os
 
 if __name__ == '__main__':
     # config.py 在 import 當下就會用 os.environ.get() 讀取 DB_SERVER 等連線設定，
-    # 所以 load_dotenv() 一定要在 import services.db（進而 import config）之前執行，
+    # 所以 load_dotenv() 一定要在 import services.core.db（進而 import config）之前執行，
     # 不然會讀到空字串，拼出無效的連線字串。
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
-from services import db as db_service
-from services.geo import compute_tree_coordinate
+from services.core import db as db_service
+from services.core.geo import compute_tree_coordinate
 
 
 def load_measurements_for_coordinate() -> list:

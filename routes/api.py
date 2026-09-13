@@ -6,9 +6,9 @@ import os
 import uuid
 
 from flask import Blueprint, request, jsonify
-from services import db as db_service
+from services.core import db as db_service
 from routes.admin import login_required
-from services import data_pipeline
+from services.core import data_pipeline
 import config
 
 api_bp = Blueprint('api', __name__)

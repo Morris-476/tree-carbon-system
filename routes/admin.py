@@ -7,7 +7,7 @@ from functools import wraps
 from flask import (Blueprint, session, request, jsonify,
                    redirect, url_for, render_template)
 from werkzeug.security import check_password_hash
-from services import db as db_service
+from services.core import db as db_service
 
 admin_bp = Blueprint('admin', __name__)
 

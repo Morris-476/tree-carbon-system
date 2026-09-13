@@ -1,6 +1,6 @@
 # 陳信睿 8/29 修改
 """
-services/db.py
+services/core/db.py
 所有 SQL Server 查詢邏輯的唯一入口。
 資料庫正規化為四張表：Species_Ref、Trees、Measurements、Admins。
 site_name 已併入 Measurements（每筆量測各自記錄巡檢案場，不再另外開 Sites 表）。
@@ -12,7 +12,7 @@ import os
 import uuid
 import pyodbc
 import config
-from services.carbon import calculate_carbon
+from services.core.carbon import calculate_carbon
 
 # IPCC 預設含碳率（生質量中碳的比例），用於由 carbon_absorpation 反推 biomass。
 # Measurements.biomass 為 NOT NULL，但目前專案內尚無正式的生質量計算公式，

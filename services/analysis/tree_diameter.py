@@ -3,15 +3,15 @@
 # 用途：樹徑換算批次腳本，跟 tree_coordinate.py／tree_species.py 同一種模式——
 #      離線執行，不是 /api/upload 即時流程的一部分。讀取已經有代表距離
 #      （Final_Dist_cm）、但樹徑（dbh）還沒算出來的代表紀錄，呼叫
-#      services/diameter.py 的針孔成像公式，把結果寫回 Measurements.dbh。
+#      services/core/diameter.py 的針孔成像公式，把結果寫回 Measurements.dbh。
 import os
 
 if __name__ == '__main__':
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
-from services import db as db_service
-from services.diameter import calculate_diameter_cm
+from services.core import db as db_service
+from services.core.diameter import calculate_diameter_cm
 
 
 def calculate_pending_diameters() -> dict:
