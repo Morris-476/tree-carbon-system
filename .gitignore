@@ -26,6 +26,9 @@ static/img/
 # 執行期日誌
 *.log
 
+# 報告用 Word 文件（不進版控）
+*.docx
+
 # 執行檔（不屬於原始碼）
 *.exe
 cloudflared*
