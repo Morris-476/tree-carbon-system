@@ -166,8 +166,8 @@ async function loadSpecies() {
     speciesSelect.innerHTML = '<option value="">請選擇樹種</option>';
     species.forEach((s) => {
       const opt = document.createElement("option");
-      opt.value = s.id;
-      opt.textContent = s.name;
+      opt.value = s.species_id;
+      opt.textContent = s.species_name;
       speciesSelect.appendChild(opt);
     });
   } catch {
