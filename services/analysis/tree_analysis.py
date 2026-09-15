@@ -5,7 +5,7 @@ from services import db as db_service
 
 # ========== 設定 ==========
 MIN_RECORDS = 2       # 少於此筆數標記為存疑
-GAP_SECONDS = 2       # 間隔超過幾秒視為不同棵樹
+GAP_SECONDS = 2       # 同一站點的 track_id 時間序列，間隔超過幾秒視為換了一部影片
 MAX_VALID_DIST = 800  # ToF 有效距離上限（cm）
 
 
@@ -90,19 +90,26 @@ valid = valid.sort_values('record_id').drop_duplicates(
 ).reset_index(drop=True)
 
 # 分群邏輯：
-#   - 該站點有 track_id（影片追蹤編號）資料時，代表是連續錄製（可能中途不停頓），
-#     ToF 讀值的時間間隔會失效，改以 track_id 分群 —— 每個非 NULL 的 track_id
-#     視為一棵樹，沒有偵測到樹幹（track_id 為 NULL）的影格直接排除，不算獨立的樹。
-#   - 該站點完全沒有 track_id 資料（舊式純 ToF 資料）時，才 fallback 用時間間隔
-#     （超過 GAP_SECONDS 秒視為換了一棵樹）分群，維持原本行為。
+#   - 以 track_id（影片追蹤編號）為主：沒有偵測到樹幹（track_id 為 NULL）的
+#     影格直接排除，不算獨立的樹。
+#   - 該站點完全沒有 track_id 資料（舊式純 ToF 資料）時，代表無法辨別是哪一棵樹，
+#     直接整批排除、不納入任何計算，不再 fallback 用時間間隔分群。
+#   - 同一站點常常分多部影片上傳，而每部影片的 track_id 都會從 1 重新編號，
+#     若只用 (site_name, track_id) 當 key，不同影片的 1 號樹會被誤判成同一棵。
+#     這裡先用時間間隔（超過 GAP_SECONDS 秒視為換了一部影片）切出「影片批次」，
+#     同一批次內才用 track_id 分群，key 變成 (site_name, 影片批次序號, track_id)，
+#     確保 tree id 不會跨影片重複。
 def _assign_tree_key(site_df: pd.DataFrame) -> pd.DataFrame:
     site_df = site_df.sort_values('DATETIME').reset_index(drop=True)
-    if site_df['track_id'].notna().any():
-        site_df = site_df[site_df['track_id'].notna()].copy()
-        site_df['tree_key'] = list(zip(site_df['site_name'], site_df['track_id']))
-    else:
-        gap = site_df['DATETIME'].diff().dt.total_seconds().fillna(0) > GAP_SECONDS
-        site_df['tree_key'] = list(zip(site_df['site_name'], gap.cumsum()))
+    if not site_df['track_id'].notna().any():
+        return site_df.iloc[0:0].assign(video_seq=[], tree_key=[], iqr_key=[])
+    site_df = site_df[site_df['track_id'].notna()].copy()
+    video_gap = site_df['DATETIME'].diff().dt.total_seconds().fillna(0) > GAP_SECONDS
+    site_df['video_seq'] = video_gap.cumsum()
+    site_df['tree_key'] = list(zip(site_df['site_name'], site_df['video_seq'], site_df['track_id']))
+    # IQR 去極端值以同一影片批次內的多棵樹（多個 track_id）合併計算，
+    # 而非單一 track_id 自己一群。
+    site_df['iqr_key'] = list(zip(site_df['site_name'], site_df['video_seq']))
     return site_df
 
 valid = pd.concat(
@@ -110,13 +117,15 @@ valid = pd.concat(
     ignore_index=True
 )
 
-# 去除極端值函式（IQR法）
-def remove_outliers_and_mean(series):
-    Q1 = series.quantile(0.25)
-    Q3 = series.quantile(0.75)
-    IQR = Q3 - Q1
-    filtered = series[(series >= Q1 - 1.5 * IQR) & (series <= Q3 + 1.5 * IQR)]
-    return round(filtered.mean(), 1)
+# 去除極端值（IQR法）：
+# Q1/Q3 門檻依 iqr_key 計算 —— 有 track_id 時是「同一影片批次內所有物件」合併算，
+# 沒有 track_id 時退回每個樹群自己算，再各自套用門檻過濾自己的讀值。
+_grp = valid.groupby('iqr_key')['ToF_Dist1_cm']
+_q1 = _grp.transform('quantile', 0.25)
+_q3 = _grp.transform('quantile', 0.75)
+_iqr = _q3 - _q1
+_in_range = valid['ToF_Dist1_cm'].between(_q1 - 1.5 * _iqr, _q3 + 1.5 * _iqr)
+valid['ToF_filtered'] = valid['ToF_Dist1_cm'].where(_in_range)
 
 # 每群統計
 # record_id 取該群「中間（偏後）」那一筆，讓寫回 Final_Dist_cm 的代表列
@@ -128,7 +137,7 @@ result = valid.groupby('tree_key').agg(
     開始時間=('DATETIME', 'first'),
     結束時間=('DATETIME', 'last'),
     筆數=('ToF_Dist1_cm', 'count'),
-    平均距離_cm=('ToF_Dist1_cm', remove_outliers_and_mean),
+    平均距離_cm=('ToF_filtered', lambda x: round(x.mean(), 1)),
     最小距離_cm=('ToF_Dist1_cm', 'min'),
     最大距離_cm=('ToF_Dist1_cm', 'max'),
     原始距離列表=('ToF_Dist1_cm', lambda x: list(x)),
