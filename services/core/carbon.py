@@ -45,7 +45,13 @@ def calculate_carbon(dbh, allo_param_a, allo_param_b, carbon_fraction) -> Carbon
         return CarbonResult(
             error=f'{invalid_param} 無效（必須是大於 0 的數字），無法計算固碳量'
         )
-
+    # 資料庫讀出來的 allo_param_a/b、carbon_fraction 可能是 decimal.Decimal 型別，
+    # 跟 dbh（float）混用會讓 ** 運算報 TypeError，這裡統一轉成 float 再計算
+    dbh = float(dbh)
+    allo_param_a = float(allo_param_a)
+    allo_param_b = float(allo_param_b)
+    carbon_fraction = float(carbon_fraction)
+    
     biomass_kg = allo_param_a * (dbh ** allo_param_b)
     carbon_kg = biomass_kg * carbon_fraction
     co2_kg = carbon_kg * CO2_EQUIVALENT_FACTOR
