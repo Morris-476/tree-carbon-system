@@ -59,3 +59,35 @@ def _find_invalid_param(pixel_width_px, image_width_px, distance_cm,
         if value is None or value <= 0:
             return name
     return None
+
+
+@dataclass
+class ScaleResult:
+    """比例尺換算結果（每像素代表幾公分），供 services/measure/pipeline.py 使用。
+    是 calculate_diameter_cm() 反過來解的版本：那支函式是「已經量到像素寬度，
+    直接算出真實公分數」；這支函式是「還沒量像素寬度前，先算出比例尺」，
+    讓 geometry.py 可以拿這個比例尺去掃描切片、換算寬度。
+
+    error 為 None 代表計算成功；不為 None 時代表參數無效，此時 scale_cm_per_px
+    維持預設值 0.0，呼叫端應先檢查 error 再使用數值。
+    """
+    scale_cm_per_px: float = 0.0
+    error: Optional[str] = None
+
+
+def calculate_scale_cm_per_px(image_width_px, distance_cm, focal_mm, sensor_width_mm) -> ScaleResult:
+    """依拍攝距離與相機參數，算出「每像素代表幾公分」的比例尺（針孔成像公式）。
+    四個參數任一個是 None 或 <= 0 時不會拋例外，改回傳 error 有值的 ScaleResult。
+    """
+    params = {
+        'image_width_px': image_width_px,
+        'distance_cm': distance_cm,
+        'focal_mm': focal_mm,
+        'sensor_width_mm': sensor_width_mm,
+    }
+    for name, value in params.items():
+        if value is None or value <= 0:
+            return ScaleResult(error=f'{name} 無效（必須是大於 0 的數字），無法計算比例尺')
+
+    scale_cm_per_px = (sensor_width_mm * distance_cm) / (focal_mm * image_width_px)
+    return ScaleResult(scale_cm_per_px=round(scale_cm_per_px, 6))
