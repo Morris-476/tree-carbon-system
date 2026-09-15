@@ -7,21 +7,18 @@ from functools import wraps
 from flask import (Blueprint, session, request, jsonify,
                    redirect, url_for, render_template)
 from werkzeug.security import check_password_hash
-from services import db as db_service
+from services.core import db as db_service
 
 admin_bp = Blueprint('admin', __name__)
 
-ALLOWED_STATUSES = frozenset({'confirmed', 'pending'})
+# 負責人：陳政雍 8/27 修正允許值為 Pending／Approved
+ALLOWED_STATUSES = frozenset({'Pending', 'Approved'})
 
 
 # ── 登入保護裝飾器 ────────────────────────────────────────────────
 # 陳政雍 8/1修改
 def login_required(f):
-    """
-    套在需要登入的路由上。
-    - API 路由（/api/ 開頭或 Accept: application/json）回傳 401 JSON
-    - 頁面路由轉址到登入頁
-    """
+    """套在需要登入的路由上，未登入時 API 回 401、頁面轉址登入頁。"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'admin_id' not in session:
@@ -72,10 +69,7 @@ def manage_page():
 # 陳政雍 8/1修改
 @admin_bp.route('/api/admin/login', methods=['POST'])
 def api_login():
-    """
-    接受 JSON 格式的 {username, password}，驗證成功後建立 session。
-    帳號或密碼錯誤時統一回傳 401，不區分是帳號不存在還是密碼錯誤。
-    """
+    """接受 JSON 格式的 {username, password}，驗證成功後建立 session。"""
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
     password = (data.get('password') or '').strip()
@@ -111,17 +105,48 @@ def api_get_trees():
 
 
 # ── API：更新樹木狀態（唯一能把 pending → confirmed 的入口）────────
+# 負責人：陳政雍 8/27 完成確認／刪除 API
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['PUT'])
 @login_required
 def api_update_tree(tree_id: int):
-    """status 只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。"""
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    """status 必填，只允許 ALLOWED_STATUSES 內的值，其餘回傳 400。
+    dbh、species 可選（雙擊編輯後跟著確認一起送），型別錯誤回傳 400。
+
+    2026/09/12修改：不再接受前端直接傳入的 carbon——固碳量必須是
+    「樹徑 × 樹種係數」算出來的，不能讓使用者手動填一個對不起來的數字。
+    改成後端用最新的 dbh／species（剛更新的，或原本就有的）重新算一次，
+    確保這兩個一改，固碳量一定跟著更新，不會停在舊數字。
+    """
+    data = request.get_json(silent=True) or {}
+    new_status = data.get('status')
+    if new_status not in ALLOWED_STATUSES:
+        return jsonify({'error': 'status 格式錯誤'}), 400
+
+    dbh = data.get('dbh')
+    species = data.get('species')
+    if dbh is not None and not isinstance(dbh, (int, float)):
+        return jsonify({'error': 'dbh 格式錯誤'}), 400
+    if species is not None and not isinstance(species, str):
+        return jsonify({'error': 'species 格式錯誤'}), 400
+
+    if not db_service.admin_update_measurement(tree_id, new_status, dbh=dbh, species=species):
+        return jsonify({'error': '更新失敗，查無此筆資料'}), 400
+    return jsonify({'success': True}), 200
 
 
 # ── API：刪除樹木記錄 ─────────────────────────────────────────────
+# 張恆輔 8/25新增
 @admin_bp.route('/api/admin/trees/<int:tree_id>', methods=['DELETE'])
 @login_required
 def api_delete_tree(tree_id: int):
-    # TODO: 待實作 — 負責人：____
-    raise NotImplementedError("此函式尚未實作")
+    if not db_service.delete_tree(tree_id):
+        return jsonify({'error': '刪除失敗，查無此筆資料'}), 400
+    return jsonify({'success': True}), 200
+
+
+# ── API：拍攝設備清單（資料上傳頁下拉選單用）─────────────────────
+# 2026/09/06新增
+@admin_bp.route('/api/camera-profiles', methods=['GET'])
+@login_required
+def api_get_camera_profiles():
+    return jsonify(db_service.get_camera_profiles()), 200

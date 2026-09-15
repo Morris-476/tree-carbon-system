@@ -12,14 +12,18 @@ from flask import Flask
 from routes.pages import pages_bp
 from routes.api import api_bp
 from routes.admin import admin_bp
+from routes.measure import measure_bp
 import config
 
 app = Flask(__name__)
 # secret_key 從環境變數讀取，不可留空（會導致 session 無法正常運作）
 app.secret_key = config.SECRET_KEY
+# Flask 預設會把 jsonify() 的欄位依字母排序，關掉讓 API 回傳保留程式碼裡設定的欄位順序
+app.json.sort_keys = False
 app.register_blueprint(pages_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(measure_bp)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

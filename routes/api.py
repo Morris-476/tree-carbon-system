@@ -1,13 +1,85 @@
 """
 routes/api.py
 一般資料 API（樹木列表、地圖資料等）。
-
-目前尚未實作任何 API 路由，僅先提供 blueprint 定義以讓 app.py 可以正常啟動。
 """
-from flask import Blueprint, jsonify
-from services import db as db_service
+import os
+import uuid
+
+from flask import Blueprint, request, jsonify
+from services.core import db as db_service
+from routes.admin import login_required
+from services.core import data_pipeline
+import config
 
 api_bp = Blueprint('api', __name__)
+
+
+# 負責人：蔡宗倫
+# 開發日期：2026/08/24
+# 2026/08/29 修改：對齊完成後改為連同影片截圖一起寫入 dbo.Measurements
+# 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並寫入資料庫
+@api_bp.route('/api/upload', methods=['POST'])
+@login_required
+def api_upload():
+    rtk_file = request.files.get('rtk_file')
+    arduino_file = request.files.get('arduino_file')
+    mp4_file = request.files.get('mp4_file')
+
+    if not rtk_file or not rtk_file.filename:
+        return jsonify({'error': '請上傳 RTK 檔案'}), 400
+    if not arduino_file or not arduino_file.filename:
+        return jsonify({'error': '請上傳 Arduino 檔案'}), 400
+
+    upload_dir = os.path.join(config.UPLOAD_FOLDER, uuid.uuid4().hex)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    rtk_path = os.path.join(upload_dir, rtk_file.filename)
+    arduino_path = os.path.join(upload_dir, arduino_file.filename)
+    rtk_file.save(rtk_path)
+    arduino_file.save(arduino_path)
+
+    video_path = None
+    if mp4_file and mp4_file.filename:
+        video_path = os.path.join(upload_dir, mp4_file.filename)
+        mp4_file.save(video_path)
+
+    # 負責人：Morris，開發日期：2026/09/12
+    # 拍攝設備焦距／感光元件寬度，來自資料上傳頁的下拉選單／手動輸入欄位
+    # （見 templates/admin/upload.html），供樹徑換算公式使用。沒有選、
+    # 或影片本身沒有偵測到樹時，樹徑算不出來，dbh 仍會維持 0。
+    def _parse_positive_float(raw):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    focal_mm = _parse_positive_float(request.form.get('focal_mm'))
+    sensor_width_mm = _parse_positive_float(request.form.get('sensor_width'))
+
+    result = data_pipeline.run_upload_and_save(
+        rtk_file_path=rtk_path,
+        csv_file_path=arduino_path,
+        video_path=video_path,
+        focal_mm=focal_mm,
+        sensor_width_mm=sensor_width_mm,
+    )
+
+    if result['status'] != 'success':
+        return jsonify({'error': result['message']}), 400
+
+    video_start_at = result['video_start_at']
+
+    return jsonify({
+        'success': True,
+        'total_count': result['total_count'],
+        'matched_gps_count': result['matched_gps_count'],
+        'inserted': result['inserted'],
+        'tree_id': result['tree_id'],
+        'site_name': result['site_name'],
+        'video_start_at': video_start_at.strftime('%Y-%m-%d %H:%M:%S') if video_start_at else None,
+        'video_filename': result['video_filename'],
+    }), 200
 
 
 #陳政雍 8/18 新增Map功能

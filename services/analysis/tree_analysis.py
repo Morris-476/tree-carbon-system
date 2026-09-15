@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from services import db as db_service
+from services.core import db as db_service
 
 # ========== 設定 ==========
 MIN_RECORDS = 2       # 少於此筆數標記為存疑
@@ -66,29 +66,6 @@ def write_final_distances(result: pd.DataFrame) -> None:
         conn.close()
 
 
-# ========== 讀取 Measurements 數據 ==========
-df = load_measurements()
-df.columns = df.columns.str.strip()
-df['DATETIME'] = pd.to_datetime(df['DATE'].astype(str) + ' ' + df['TIME'].astype(str))
-
-# 只保留 ToF1（Laser）ON 且距離在有效範圍內
-valid = df[
-    (df['Laser_Status'] == 'ON') &
-    (df['ToF_Dist1_cm'] > 0) &
-    (df['ToF_Dist1_cm'] <= MAX_VALID_DIST)
-].copy().reset_index(drop=True)
-
-# 去除重複匯入的資料：
-#   曾發現同一批量測（同站點、同時間戳記、同距離、同 track_id）被完整重複寫入
-#   資料庫好幾次（例如同一秒的同一筆讀值出現在 4 個不同的 record_id）。
-#   時間間隔分群完全依賴時間戳記排序，遇到這種重複資料會把彼此不相干、
-#   record_id 差很遠的重複列誤判成同一群。這裡在分群前先去重，只保留
-#   record_id 最小（最早寫入）的那一筆。
-valid = valid.sort_values('record_id').drop_duplicates(
-    subset=['site_name', 'DATE', 'TIME', 'ToF_Dist1_cm', 'track_id'],
-    keep='first'
-).reset_index(drop=True)
-
 # 分群邏輯：
 #   - 以 track_id（影片追蹤編號）為主：沒有偵測到樹幹（track_id 為 NULL）的
 #     影格直接排除，不算獨立的樹。
@@ -112,64 +89,105 @@ def _assign_tree_key(site_df: pd.DataFrame) -> pd.DataFrame:
     site_df['iqr_key'] = list(zip(site_df['site_name'], site_df['video_seq']))
     return site_df
 
-valid = pd.concat(
-    [_assign_tree_key(g) for _, g in valid.groupby('site_name', dropna=False)],
-    ignore_index=True
-)
 
-# 去除極端值（IQR法）：
-# Q1/Q3 門檻依 iqr_key 計算 —— 有 track_id 時是「同一影片批次內所有物件」合併算，
-# 沒有 track_id 時退回每個樹群自己算，再各自套用門檻過濾自己的讀值。
-_grp = valid.groupby('iqr_key')['ToF_Dist1_cm']
-_q1 = _grp.transform('quantile', 0.25)
-_q3 = _grp.transform('quantile', 0.75)
-_iqr = _q3 - _q1
-_in_range = valid['ToF_Dist1_cm'].between(_q1 - 1.5 * _iqr, _q3 + 1.5 * _iqr)
-valid['ToF_filtered'] = valid['ToF_Dist1_cm'].where(_in_range)
+def compute_tree_groups(df: pd.DataFrame) -> pd.DataFrame:
+    """把清洗過的 Measurements 依 tree_key 分群，對每群 ToF 距離做 IQR 去極端值後取平均。"""
+    # 去除重複匯入的資料：
+    #   曾發現同一批量測（同站點、同時間戳記、同距離、同 track_id）被完整重複寫入
+    #   資料庫好幾次（例如同一秒的同一筆讀值出現在 4 個不同的 record_id）。
+    #   時間間隔分群完全依賴時間戳記排序，遇到這種重複資料會把彼此不相干、
+    #   record_id 差很遠的重複列誤判成同一群。這裡在分群前先去重，只保留
+    #   record_id 最小（最早寫入）的那一筆。
+    df = df.sort_values('record_id').drop_duplicates(
+        subset=['site_name', 'DATE', 'TIME', 'ToF_Dist1_cm', 'track_id'],
+        keep='first'
+    ).reset_index(drop=True)
 
-# 每群統計
-# record_id 取該群「中間（偏後）」那一筆，讓寫回 Final_Dist_cm 的代表列
-# 盡量落在群內資料的中段，而不是永遠卡在最前面。
-result = valid.groupby('tree_key').agg(
-    record_id=('record_id', lambda s: s.iloc[len(s) // 2]),
-    站點=('site_name', 'first'),
-    track_id=('track_id', 'first'),
-    開始時間=('DATETIME', 'first'),
-    結束時間=('DATETIME', 'last'),
-    筆數=('ToF_Dist1_cm', 'count'),
-    平均距離_cm=('ToF_filtered', lambda x: round(x.mean(), 1)),
-    最小距離_cm=('ToF_Dist1_cm', 'min'),
-    最大距離_cm=('ToF_Dist1_cm', 'max'),
-    原始距離列表=('ToF_Dist1_cm', lambda x: list(x)),
-).reset_index(drop=True)
+    valid = pd.concat(
+        [_assign_tree_key(g) for _, g in df.groupby('site_name', dropna=False)],
+        ignore_index=True
+    )
 
-result['資料品質'] = result['筆數'].apply(
-    lambda x: '✓ 有效' if x >= MIN_RECORDS else '⚠ 存疑（筆數不足）'
-)
-result.index = result.index + 1
-result.index.name = '樹木編號'
+    # 去除極端值（IQR法）：
+    # Q1/Q3 門檻依 iqr_key 計算 —— 同一影片批次內所有物件（多個 track_id）合併算，
+    # 再各自套用門檻過濾自己的讀值。
+    grp = valid.groupby('iqr_key')['ToF_Dist1_cm']
+    q1 = grp.transform('quantile', 0.25)
+    q3 = grp.transform('quantile', 0.75)
+    iqr = q3 - q1
+    in_range = valid['ToF_Dist1_cm'].between(q1 - 1.5 * iqr, q3 + 1.5 * iqr)
+    valid['ToF_filtered'] = valid['ToF_Dist1_cm'].where(in_range)
 
-# ========== 輸出結果 ==========
-print("=" * 70)
-print("樹木量測數據分析結果")
-print("=" * 70)
+    # record_id 取該群「中間（偏後）」那一筆，讓寫回 Final_Dist_cm 的代表列
+    # 盡量落在群內資料的中段，而不是永遠卡在最前面。
+    result = valid.groupby('tree_key').agg(
+        record_id=('record_id', lambda s: s.iloc[len(s) // 2]),
+        站點=('site_name', 'first'),
+        track_id=('track_id', 'first'),
+        開始時間=('DATETIME', 'first'),
+        結束時間=('DATETIME', 'last'),
+        筆數=('ToF_Dist1_cm', 'count'),
+        平均距離_cm=('ToF_filtered', lambda x: round(x.mean(), 1)),
+        最小距離_cm=('ToF_Dist1_cm', 'min'),
+        最大距離_cm=('ToF_Dist1_cm', 'max'),
+        原始距離列表=('ToF_Dist1_cm', lambda x: list(x)),
+    ).reset_index(drop=True)
 
-for idx, row in result.iterrows():
-    print(f"\n【樹木 {idx}】{row['資料品質']}")
-    print(f"  量測時間：{row['開始時間'].strftime('%H:%M:%S')} ~ {row['結束時間'].strftime('%H:%M:%S')}")
-    print(f"  有效筆數：{row['筆數']} 筆")
-    print(f"  距離原始值：{row['原始距離列表']} cm")
-    print(f"  平均距離（去極端值後）：{row['平均距離_cm']} cm")
-    print(f"  最小距離：{row['最小距離_cm']} cm｜最大距離：{row['最大距離_cm']} cm")
+    result['資料品質'] = result['筆數'].apply(
+        lambda x: '✓ 有效' if x >= MIN_RECORDS else '⚠ 存疑（筆數不足）'
+    )
+    result.index = result.index + 1
+    result.index.name = '樹木編號'
+    return result
 
-print("\n" + "=" * 70)
 
-# 儲存 CSV（不含原始距離列表、record_id 欄位）
-output = result.drop(columns=['原始距離列表', 'record_id'])
-output.to_csv('tree_analysis_result_v2.csv', encoding='utf-8-sig')
-print("✓ 結果已儲存至：tree_analysis_result_v2.csv")
+def analyze_and_write_final_distances(verbose: bool = True, save_csv: bool = True) -> dict:
+    """完整流程：讀取 Measurements → 篩選有效 ToF 讀值 → 分群 → IQR 去極端值取平均
+    → 寫回 Measurements.Final_Dist_cm。供 data_pipeline.py 在每次上傳資料後呼叫，
+    也可直接執行本檔案（見下方 __main__）獨立跑一次。
 
-# ========== 寫回 Measurements.Final_Dist_cm ==========
-ensure_final_dist_column()
-write_final_distances(result)
-print(f"✓ 已將 {len(result)} 群的平均距離寫回 Measurements.Final_Dist_cm")
+    Returns:
+        dict：{'group_count': 分群後的樹木數量}
+    """
+    df = load_measurements()
+    df.columns = df.columns.str.strip()
+    df['DATETIME'] = pd.to_datetime(df['DATE'].astype(str) + ' ' + df['TIME'].astype(str))
+
+    # 只保留 ToF1（Laser）ON 且距離在有效範圍內
+    valid = df[
+        (df['Laser_Status'] == 'ON') &
+        (df['ToF_Dist1_cm'] > 0) &
+        (df['ToF_Dist1_cm'] <= MAX_VALID_DIST)
+    ].copy().reset_index(drop=True)
+
+    result = compute_tree_groups(valid)
+
+    if verbose:
+        print("=" * 70)
+        print("樹木量測數據分析結果")
+        print("=" * 70)
+        for idx, row in result.iterrows():
+            print(f"\n【樹木 {idx}】{row['資料品質']}")
+            print(f"  量測時間：{row['開始時間'].strftime('%H:%M:%S')} ~ {row['結束時間'].strftime('%H:%M:%S')}")
+            print(f"  有效筆數：{row['筆數']} 筆")
+            print(f"  距離原始值：{row['原始距離列表']} cm")
+            print(f"  平均距離（去極端值後）：{row['平均距離_cm']} cm")
+            print(f"  最小距離：{row['最小距離_cm']} cm｜最大距離：{row['最大距離_cm']} cm")
+        print("\n" + "=" * 70)
+
+    if save_csv:
+        output = result.drop(columns=['原始距離列表', 'record_id'])
+        output.to_csv('tree_analysis_result_v2.csv', encoding='utf-8-sig')
+        if verbose:
+            print("✓ 結果已儲存至：tree_analysis_result_v2.csv")
+
+    ensure_final_dist_column()
+    write_final_distances(result)
+    if verbose:
+        print(f"✓ 已將 {len(result)} 群的平均距離寫回 Measurements.Final_Dist_cm")
+
+    return {'group_count': len(result)}
+
+
+if __name__ == '__main__':
+    analyze_and_write_final_distances()

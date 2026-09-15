@@ -1,0 +1,977 @@
+# 陳信睿 8/29 修改
+"""
+services/core/db.py
+所有 SQL Server 查詢邏輯的唯一入口。
+資料庫正規化為四張表：Species_Ref、Trees、Measurements、Admins。
+site_name 已併入 Measurements（每筆量測各自記錄巡檢案場，不再另外開 Sites 表）。
+連線憑證一律從環境變數讀取，不寫死任何帳號密碼。
+"""
+import base64
+import datetime
+import os
+import uuid
+import pyodbc
+import config
+from services.core.carbon import calculate_carbon
+
+# IPCC 預設含碳率（生質量中碳的比例），用於由 carbon_absorpation 反推 biomass。
+# Measurements.biomass 為 NOT NULL，但目前專案內尚無正式的生質量計算公式，
+# 待負責固碳計算的同學補上真正公式後，這裡應替換掉。
+CARBON_FRACTION = 0.47
+
+
+def get_db_connection():
+    """建立 SQL Server 連線（憑證由 config.py 讀自環境變數）。
+    DB_USER 留空時自動切換為 Windows 整合驗證（本機開發用）。
+    """
+    try:
+        base = (
+            f'DRIVER={{ODBC Driver 17 for SQL Server}};'
+            f'SERVER={config.DB_SERVER};'
+            f'DATABASE={config.DB_NAME};'
+            f'Encrypt={config.DB_ENCRYPT};'
+            f'TrustServerCertificate={config.DB_TRUST_CERT};'
+            f'Timeout=10;'
+        )
+        if config.DB_USER:
+            conn_str = base + f'UID={config.DB_USER};PWD={config.DB_PASSWORD};'
+        else:
+            conn_str = base + 'Trusted_Connection=yes;'
+        return pyodbc.connect(conn_str)
+    except Exception as e:
+        print(f"資料庫連線失敗: {e}")
+        return None
+
+
+def _img_bin_to_data_uri(img_bin) -> "str | None":
+    """把圖片二進位內容轉成前端可直接用的 data URI 字串。"""
+    if img_bin is None:
+        return None
+    img_bytes = bytes(img_bin)
+    if img_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+        mime = 'image/png'
+    elif img_bytes.startswith(b'\xff\xd8\xff'):
+        mime = 'image/jpeg'
+    elif img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+        mime = 'image/gif'
+    else:
+        mime = 'image/jpeg'
+    b64 = base64.b64encode(img_bytes).decode('ascii')
+    return f'data:{mime};base64,{b64}'
+
+
+def _get_or_create_species(cursor, species_name: str) -> int:
+    """查詢 Species_Ref，若不存在則以預設係數新增。回傳 species_id。"""
+    cursor.execute(
+        "SELECT species_id FROM Species_Ref WHERE species_name = ?", species_name
+    )
+    row = cursor.fetchone()
+    if row is not None:
+        return row[0]
+    cursor.execute(
+        "INSERT INTO Species_Ref (species_name) OUTPUT INSERTED.species_id VALUES (?)",
+        species_name
+    )
+    return cursor.fetchone()[0]
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_species.py 使用，_get_or_create_species()
+# 需要一個已開好的 cursor，是給 db.py 內部函式用的私有輔助函式，這支包成
+# 獨立連線的公開版本，讓批次腳本不用自己碰 cursor。
+def get_or_create_species_id(species_name: str) -> int:
+    """查詢/新增 Species_Ref，回傳 species_id。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢/新增樹種')
+    try:
+        cursor = conn.cursor()
+        species_id = _get_or_create_species(cursor, species_name)
+        conn.commit()
+        return species_id
+    finally:
+        conn.close()
+
+
+# 張恆輔 8/30修正：這個函式之前被重複定義了兩次（第二份多帶 site_id），
+# Python 會讓後面那份蓋掉前面，前面那份是永遠不會被呼叫到的死代碼，故刪除，
+# 只留下面這份完整版本。
+#
+# 這個 BUG 的核心修法：Trees.tracker_id 為 NOT NULL，代表每一棵「偵測到的樹」
+# 都必須有自己專屬的 tracker_id（ByteTrack 給的追蹤編號），才能各自對應到
+# 獨立的 Tree_ID。同一個 tracker_id 出現第二次，代表同一棵樹的另一次量測，
+# 才共用既有 Tree_ID；tracker_id 是全新的，或呼叫端沒有追蹤器可用（例如桌面
+# CLI 單張照片辨識），一律視為新樹、INSERT 一筆新的 Trees 記錄取得新 Tree_ID。
+# 絕對不可以省略 tracker_id 或用固定值頂替，否則所有偵測到的樹都會被誤綁成
+# 同一個 Tree_ID（這正是目前資料庫裡發生的問題）。
+def _get_or_create_tree_id(cursor, track_id, species_id=None,
+                            lat=None, lon=None, site_id=None) -> int:
+    """依 tracker_id 找出（或新增）對應的 Tree_ID。
+    track_id 為 None 時視為沒有追蹤資訊可比對，一律新增一筆 Trees 記錄。
+    """
+    if track_id is not None:
+        cursor.execute("SELECT Tree_ID FROM Trees WHERE tracker_id = ?", track_id)
+        row = cursor.fetchone()
+        if row is not None:
+            return row[0]
+    else:
+        cursor.execute("SELECT ISNULL(MAX(tracker_id), 0) + 1 FROM Trees")
+        track_id = cursor.fetchone()[0]
+
+    cursor.execute(
+        "INSERT INTO Trees (site_id, tracker_id, species_id, [LATITUDE N/S], [LONGITUDE E/W]) "
+        "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?, ?, ?)",
+        site_id, track_id, species_id, lat, lon
+    )
+    return cursor.fetchone()[0]
+
+
+# 陳政雍 8/29修正：改用 main 版本，修復檢視資料表查詢失敗問題
+# 負責人：陳政雍 8/27 新增 record_id、dbh、site_name 三個欄位
+# ── 地圖頁查詢（v_TreeCompleteData 檢視表）───────────────────────
+def get_tree_map_data():
+    """地圖頁用：回傳樹木清單與資料庫連線狀態。"""
+    conn = get_db_connection()
+    if conn is None:
+        return [], "disconnected"
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                紀錄編號           AS record_id,
+                Tree_ID            AS tree_id,
+                樹木種類           AS species_name,
+                樹徑cm             AS dbh,
+                固碳量             AS carbon_absorpation,
+                緯度               AS latitude,
+                經度               AS longitude,
+                巡檢案場           AS site_name,
+                樹木照片二進位     AS image_data
+            FROM v_TreeCompleteData
+        """)
+        columns = [col[0] for col in cursor.description]
+        rows = cursor.fetchall()
+        tree_list = [dict(zip(columns, row)) for row in rows]
+        for tree in tree_list:
+            tree['img'] = _img_bin_to_data_uri(tree.pop('image_data', None))
+            # 資料庫存的是 '25.0883747N' 這種帶方向字母的字串，Leaflet 的
+            # L.marker() 需要純數字，不轉換的話座標會變成 NaN、標記顯示不出來。
+            tree['latitude'] = _parse_coord(tree['latitude'])
+            tree['longitude'] = _parse_coord(tree['longitude'])
+        return tree_list, "connected"
+    except Exception as e:
+        print(f"get_tree_map_data 查詢失敗: {e}")
+        return [], "disconnected"
+    finally:
+        conn.close()
+
+# 負責人：陳信睿 8/18 首頁排版
+# ── 首頁統計查詢（僅 confirmed）──────────────────────────────────
+# 負責人：陳政雍 8/27 修正 status 值改為 Approved、固碳量欄位改用 carbon_absorpation
+def get_stats():
+    """回傳全站統計數字，供首頁使用。"""
+    conn = get_db_connection()
+    if conn is None:
+        return {'total_trees': 0, 'total_carbon': 0}
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) AS total_trees, SUM(carbon_absorpation) AS total_carbon
+            FROM Measurements
+            WHERE status = 'Approved'
+        """)
+        columns = [col[0] for col in cursor.description]
+        row = cursor.fetchone()
+        result = dict(zip(columns, row))
+        return {
+            'total_trees': result.get('total_trees') or 0,
+            'total_carbon': result.get('total_carbon') or 0
+        }
+    except Exception as e:
+        print(f"get_stats 查詢失敗: {e}")
+        return {'total_trees': 0, 'total_carbon': 0}
+    finally:
+        conn.close()
+
+
+# ── /measure 頁面查詢 ────────────────────────────────────────────
+# 張恆輔 9/4新增：只負責查詢 Species_Ref，不做任何固碳計算
+# 注意：carbon_fraction 欄位尚未加進 Species_Ref，此函式在該欄位補上前會查詢失敗
+def get_species_list():
+    """回傳所有樹種資料，供 /measure 頁面下拉選單與固碳計算使用。"""
+    conn = get_db_connection()
+    if conn is None:
+        return []
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT species_id, species_name, allo_param_a, allo_param_b, carbon_fraction "
+            "FROM Species_Ref ORDER BY species_name"
+        )
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    except Exception as e:
+        print(f"get_species_list 查詢失敗: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+# 2026/09/06新增：資料上傳頁用，供選擇拍攝手機型號的下拉選單
+# Camera_Profiles 資料表尚未建立（見 sql/2026-09-06_add_camera_profiles.sql），
+# 查詢失敗時先回傳與 static/measure/app.js 的 CAMERA_PRESETS 相同的內建清單，
+# 等資料表建好、遷移腳本跑過後會自動改吃資料庫資料，不用再改這支函式。
+_FALLBACK_CAMERA_PROFILES = [
+    {'name': 'iPhone 13', 'focal_mm': 5.7, 'sensor_width': 7.5},
+    {'name': 'iPhone 13 Pro', 'focal_mm': 5.8, 'sensor_width': 7.8},
+    {'name': 'iPhone 14', 'focal_mm': 5.7, 'sensor_width': 7.5},
+    {'name': 'iPhone 14 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'iPhone 15', 'focal_mm': 6.2, 'sensor_width': 8.2},
+    {'name': 'iPhone 15 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'iPhone 16', 'focal_mm': 6.2, 'sensor_width': 8.2},
+    {'name': 'iPhone 16 Pro', 'focal_mm': 6.9, 'sensor_width': 10.0},
+    {'name': 'Samsung Galaxy S24 Ultra', 'focal_mm': 6.5, 'sensor_width': 9.9},
+]
+
+
+def get_camera_profiles():
+    """回傳可選的拍攝設備清單（型號、焦距、感光元件寬度），供資料上傳頁下拉選單使用。"""
+    conn = get_db_connection()
+    if conn is None:
+        return _FALLBACK_CAMERA_PROFILES
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT profile_id, name, focal_mm, sensor_width "
+            "FROM Camera_Profiles ORDER BY name"
+        )
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return rows if rows else _FALLBACK_CAMERA_PROFILES
+    except Exception as e:
+        print(f"get_camera_profiles 查詢失敗，改用內建清單: {e}")
+        return _FALLBACK_CAMERA_PROFILES
+    finally:
+        conn.close()
+
+
+# ── 資料展示頁查詢（僅 confirmed）────────────────────────────────
+def get_tree_list():
+    """回傳樹木清單，供資料展示頁使用。"""
+    # TODO: 待實作 — 負責人：____
+    raise NotImplementedError("此函式尚未實作")
+
+
+# ── 網頁上傳寫入（status='Approved'，直接公開）──────────────────
+def save_tree_record(species, dbh, carbon, img_bin):
+    """儲存網頁上傳的辨識結果（無 GPS 座標）。"""
+    # TODO: 待實作 — 負責人：____
+    raise NotImplementedError("此函式尚未實作")
+
+
+# ── 資料處理管線寫入（status 固定 pending，等待管理員審核）──────
+def save_pipeline_record(species, dbh, carbon, lat, lon,
+                         fix_quality=None, distance_cm=None,
+                         track_id=None, status='Pending'):
+    """管線上傳：含 GPS 座標，status 固定 pending，等待管理員審核後才公開。
+    track_id 應帶入 ByteTrack 給該棵樹的追蹤 ID：同一段影片裡同一棵樹的
+    多次量測要傳同一個 track_id（才會共用同一個 Tree_ID），不同棵樹要傳
+    不同的 track_id（見 _get_or_create_tree_id 說明）。
+    """
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        species_id = _get_or_create_species(cursor, species) if species else None
+        tree_id = _get_or_create_tree_id(cursor, track_id, species_id, lat, lon)
+
+        biomass = float(carbon) / CARBON_FRACTION
+        now = datetime.datetime.now()
+        cursor.execute(
+            "INSERT INTO Measurements "
+            "(Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME]) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tree_id, dbh, biomass, carbon, status,
+            now.strftime('%Y/%m/%d'), now.strftime('%H:%M:%S')
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"save_pipeline_record 寫入失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+# ── 時間對齊 + 影片截圖寫入 dbo.Measurements ─────────────────────
+# 負責人：蔡宗倫
+# 開發日期：2026/08/29
+# 補齊 Measurements 目前沒有、但這次寫入需要的欄位（已存在就不動）。
+def _ensure_measurement_columns(cursor):
+    columns = {
+        'latitude': 'FLOAT NULL',
+        'longitude': 'FLOAT NULL',
+        'SPEED': 'DECIMAL(4,2) NULL',
+        'HEADING': 'INT NULL',
+        'TAG': 'CHAR(1) NULL',
+        'HEIGHT': 'INT NULL',
+        'Laser_Status': 'VARCHAR(10) NULL',
+        'LED_Status': 'VARCHAR(10) NULL',
+        'ToF_Dist1_cm': 'INT NULL',
+        'ToF_Dist2_cm': 'INT NULL',
+        'gnss_gap_ms': 'INT NULL',
+        'video_offset_ms': 'INT NULL',
+        'site_name': 'VARCHAR(255) NULL',
+        'image_data': 'VARBINARY(MAX) NULL',
+        # 張恆輔 8/30新增：追蹤結果（同一支影片內的追蹤編號、像素寬度），
+        # 供之後 IQR 篩選＋樹徑換算使用，這裡先只負責存起來。
+        'track_id': 'INT NULL',
+        'pixel_width': 'INT NULL',
+        # 負責人：Morris，開發日期：2026/09/12
+        # 樹徑換算公式需要的另外兩個輸入：mask_width 是量出 pixel_width
+        # 當下那張遮罩的寬度；focal_mm／sensor_width_mm 是這次上傳時
+        # 選擇的拍攝設備規格，整批共用同一組值。
+        'mask_width': 'INT NULL',
+        'focal_mm': 'DECIMAL(6,2) NULL',
+        'sensor_width_mm': 'DECIMAL(6,2) NULL',
+    }
+    for name, ddl in columns.items():
+        cursor.execute(
+            f"IF COL_LENGTH('dbo.Measurements', '{name}') IS NULL "
+            f"ALTER TABLE dbo.Measurements ADD [{name}] {ddl}"
+        )
+
+
+# 欄位改名：rtk_gap_ms -> gnss_gap_ms（GPS 定位資料其實是 GNSS，不是只有 RTK，
+# 欄位名稱改得更準確）。用 sp_rename 保留既有資料，不是新增再刪除舊欄。
+# 已經改過名字的資料庫會直接跳過，可安全重複執行。
+def _rename_rtk_gap_column(cursor):
+    cursor.execute(
+        "IF COL_LENGTH('dbo.Measurements', 'rtk_gap_ms') IS NOT NULL "
+        "AND COL_LENGTH('dbo.Measurements', 'gnss_gap_ms') IS NULL "
+        "EXEC sp_rename 'dbo.Measurements.rtk_gap_ms', 'gnss_gap_ms', 'COLUMN'"
+    )
+
+
+# 補 Trees 缺的 site_id 欄位：_get_or_create_tree_id() 的 INSERT 語法裡有
+# 用到 site_id，但實際資料庫的 Trees 表沒有這欄，會噴 Invalid column name 'site_id'。
+def _ensure_tree_columns(cursor):
+    cursor.execute(
+        "IF COL_LENGTH('dbo.Trees', 'site_id') IS NULL "
+        "ALTER TABLE dbo.Trees ADD site_id INT NULL"
+    )
+
+
+# 清掉不再使用的舊欄位：video_fps 原本規劃要用來把 video_offset_ms 換算成
+# 實際影格編號，但全專案沒有任何程式碼在寫入或讀取，一直是 NULL，故移除。
+# 欄位已經不在時會直接跳過，可安全重複執行。
+def _drop_unused_measurement_columns(cursor):
+    cursor.execute(
+        "IF COL_LENGTH('dbo.Measurements', 'video_fps') IS NOT NULL "
+        "ALTER TABLE dbo.Measurements DROP COLUMN video_fps"
+    )
+
+
+# 張恆輔 8/30修正：原本 _ensure_measurement_columns() 等 3 個 ALTER TABLE
+# 檢查會在每一次 /api/upload 請求都重新執行一次，雖然有 IF COL_LENGTH 防呆、
+# 不會重複出錯，但把 DDL 檢查放在熱路徑上不是好做法。改成只在這個process
+# 啟動後第一次呼叫時真正執行一次，之後的請求直接跳過。
+_schema_ready = False
+
+
+def _ensure_schema_ready(cursor):
+    global _schema_ready
+    if _schema_ready:
+        return
+    _rename_rtk_gap_column(cursor)
+    _ensure_measurement_columns(cursor)
+    _ensure_tree_columns(cursor)
+    _drop_unused_measurement_columns(cursor)
+    _schema_ready = True
+
+
+# 把帶正負號的十進位度數轉回 Trees.[LATITUDE N/S] / [LONGITUDE E/W] 需要的字串格式
+def _coord_to_str(value, positive_letter, negative_letter):
+    if value is None:
+        return None
+    letter = positive_letter if value >= 0 else negative_letter
+    return f'{abs(value):.7f}{letter}'
+
+
+# 供 services/analysis/tree_coordinate.py 寫回大圓公式推算出的樹木座標，
+# 覆蓋 Trees 原本存的（建樹時暫用的推車座標）經緯度。
+def update_tree_coordinate(tree_id, latitude, longitude) -> None:
+    """把推算出的樹木座標（十進位度）覆蓋寫回 Trees.[LATITUDE N/S] / [LONGITUDE E/W]。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError("資料庫連線失敗，無法寫回 Trees 座標")
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE Trees SET [LATITUDE N/S] = ?, [LONGITUDE E/W] = ? WHERE Tree_ID = ?",
+            _coord_to_str(latitude, 'N', 'S'), _coord_to_str(longitude, 'E', 'W'), tree_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 張恆輔 9/7新增：Measurements.Tree_ID 目前的分群邏輯還不穩定（同一棵樹可能對到
+# 好幾筆 Final_Dist_cm），座標計算改成不比對既有 Trees 記錄，每筆符合條件的量測
+# 都直接新增一筆 Trees 記錄（Tree_ID 為 IDENTITY，接續現有最大值往下遞增）。
+def insert_tree_coordinate(latitude, longitude, tracker_id=None) -> int:
+    """新增一筆 Trees 記錄，座標為算出的樹木座標。tracker_id 為 None 時
+    （量測列沒有追蹤編號可用）自動接續 Trees 現有最大 tracker_id 遞增一號，
+    因為 Trees.tracker_id 為 NOT NULL。回傳新增的 Tree_ID。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError("資料庫連線失敗，無法寫回 Trees 座標")
+    try:
+        cursor = conn.cursor()
+        if tracker_id is None:
+            cursor.execute("SELECT ISNULL(MAX(tracker_id), 0) + 1 FROM Trees")
+            tracker_id = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO Trees (tracker_id, [LATITUDE N/S], [LONGITUDE E/W]) "
+            "OUTPUT INSERTED.Tree_ID VALUES (?, ?, ?)",
+            tracker_id, _coord_to_str(latitude, 'N', 'S'), _coord_to_str(longitude, 'E', 'W')
+        )
+        tree_id = cursor.fetchone()[0]
+        conn.commit()
+        return tree_id
+    finally:
+        conn.close()
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：修正 tree_coordinate.py 每次上傳都重新新增重複 Trees 記錄的 bug。
+# 判斷「這個 site_name + track_id 組合是不是已經算過真實座標」，用 Trees.tracker_id
+# 是否等於這筆量測自己的 track_id 判斷（真實座標新增時 tracker_id 就是設成
+# 這個值，上傳當下的佔位 Tree 則不是），避免不同影片剛好 track_id 撞號也被
+# 誤判成同一棵樹。track_id 為 None（舊式無追蹤資料）時無法用這個方式判斷，
+# 呼叫端不應該對這種資料呼叫本函式。
+def find_linked_tree_id(site_name, track_id):
+    """回傳已經算過真實座標、且 tracker_id 對得上的 Tree_ID；找不到回傳 None。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢既有 Tree_ID')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT TOP 1 m.Tree_ID
+            FROM Measurements m
+            JOIN Trees t ON t.Tree_ID = m.Tree_ID
+            WHERE m.site_name = ? AND m.track_id = ? AND t.tracker_id = m.track_id
+        """, site_name, track_id)
+        row = cursor.fetchone()
+        return row[0] if row is not None else None
+    finally:
+        conn.close()
+
+
+def link_measurement_to_tree(record_id, tree_id) -> None:
+    """把代表紀錄的 Measurements.Tree_ID 改成算出真實座標後對應的 Tree_ID，
+    取代上傳當下寫入的佔位 Tree_ID。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法更新 Measurements.Tree_ID')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Measurements SET Tree_ID = ? WHERE record_id = ?',
+            tree_id, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_species.py 使用，找出還沒判定樹種、
+# 但有截圖可用的樹。同一棵樹可能對到好幾筆 Measurements，優先取有
+# Final_Dist_cm 的代表紀錄（跟 tree_coordinate.py 用同一筆），沒有才退回
+# 任一筆有截圖的紀錄。
+def get_trees_needing_species() -> list:
+    """回傳 [{'tree_id': int, 'image_data': bytes}, ...]，species_id 還是
+    NULL、且找得到截圖的樹，一棵樹只回傳一筆代表截圖。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢待判定樹種的樹')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT Tree_ID, image_data FROM (
+                SELECT
+                    t.Tree_ID,
+                    m.image_data,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY t.Tree_ID
+                        ORDER BY CASE WHEN m.Final_Dist_cm IS NOT NULL THEN 0 ELSE 1 END, m.record_id
+                    ) AS rn
+                FROM Trees t
+                JOIN Measurements m ON m.Tree_ID = t.Tree_ID
+                WHERE t.species_id IS NULL AND m.image_data IS NOT NULL
+            ) ranked
+            WHERE rn = 1
+        """)
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_tree_species(tree_id, species_id) -> None:
+    """把辨識出的樹種寫回 Trees.species_id。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法寫回 Trees 樹種')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Trees SET species_id = ? WHERE Tree_ID = ?',
+            species_id, tree_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_diameter.py 使用，找出「已經有代表距離
+# （Final_Dist_cm），但樹徑（dbh）還沒算出來」的代表紀錄。
+def get_measurements_needing_diameter() -> list:
+    """回傳 [{'record_id', 'pixel_width', 'mask_width', 'distance_cm',
+    'focal_mm', 'sensor_width_mm'}, ...]，dbh 還是 0、且換算需要的欄位都
+    齊全的代表紀錄。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢待換算樹徑的紀錄')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                record_id,
+                pixel_width,
+                mask_width,
+                Final_Dist_cm AS distance_cm,
+                focal_mm,
+                sensor_width_mm
+            FROM Measurements
+            WHERE dbh = 0
+              AND Final_Dist_cm IS NOT NULL
+              AND pixel_width IS NOT NULL
+              AND mask_width IS NOT NULL
+              AND focal_mm IS NOT NULL
+              AND sensor_width_mm IS NOT NULL
+        """)
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_measurement_dbh(record_id, dbh) -> None:
+    """把換算出的樹徑寫回 Measurements.dbh。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法寫回 Measurements.dbh')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Measurements SET dbh = ? WHERE record_id = ?',
+            dbh, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 負責人：Morris
+# 開發日期：2026/09/12
+# 用途：供 services/analysis/tree_carbon.py 使用，找出「樹種已辨識、樹徑
+# 已算出，但固碳量還沒算」的代表紀錄，一併查出樹種的固碳係數。
+def get_measurements_needing_carbon() -> list:
+    """回傳 [{'record_id', 'dbh', 'allo_param_a', 'allo_param_b',
+    'carbon_fraction'}, ...]，carbon_absorpation 還是 0、且已經有
+    dbh 與樹種固碳係數可用的代表紀錄。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法查詢待計算固碳量的紀錄')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                m.record_id,
+                m.dbh,
+                s.allo_param_a,
+                s.allo_param_b,
+                s.carbon_fraction
+            FROM Measurements m
+            JOIN Trees t ON t.Tree_ID = m.Tree_ID
+            JOIN Species_Ref s ON s.species_id = t.species_id
+            WHERE m.carbon_absorpation = 0
+              AND m.dbh > 0
+              AND s.allo_param_a IS NOT NULL
+              AND s.allo_param_b IS NOT NULL
+              AND s.carbon_fraction IS NOT NULL
+        """)
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def update_measurement_carbon(record_id, biomass, carbon_absorpation) -> None:
+    """把算出的生質量、固碳量寫回 Measurements。"""
+    conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('資料庫連線失敗，無法寫回 Measurements 固碳量')
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE Measurements SET biomass = ?, carbon_absorpation = ? WHERE record_id = ?',
+            biomass, carbon_absorpation, record_id
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_time_synced_measurements(records: list, site_name) -> dict:
+    """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
+    整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
+    （用第一筆有 GPS 座標的資料當樹的位置），所有秒數的量測都指向同一個 Tree_ID。
+
+    track_id／pixel_width 是呼叫端（data_pipeline.run_upload_and_save）跑完
+    TreeTracker 後配對好的追蹤結果，沒配對到（或沒上傳影片）時為 None。
+
+    dbh／biomass／carbon_absorpation 還沒有 IQR 篩選＋樹徑換算可用，先寫入 0
+    佔位，status 固定 'Pending'（等後台審核，不會出現在地圖/首頁），
+    等樹徑計算完成後，再依 record_id 回頭 UPDATE 這幾欄的真實數值。
+    """
+    if not records:
+        return {'status': 'success', 'inserted': 0, 'tree_id': None}
+
+    conn = get_db_connection()
+    if conn is None:
+        return {'status': 'error', 'message': '資料庫連線失敗'}
+    try:
+        cursor = conn.cursor()
+        _ensure_schema_ready(cursor)
+
+        first_gps = next(
+            (r for r in records if r['latitude'] is not None and r['longitude'] is not None),
+            None
+        )
+        lat_str = _coord_to_str(first_gps['latitude'], 'N', 'S') if first_gps else None
+        lon_str = _coord_to_str(first_gps['longitude'], 'E', 'W') if first_gps else None
+        tree_id = _get_or_create_tree_id(cursor, None, None, lat_str, lon_str)
+
+        for r in records:
+            recorded_at = r['recorded_at']
+            cursor.execute(
+                'INSERT INTO Measurements ('
+                'Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], '
+                'latitude, longitude, SPEED, HEADING, TAG, HEIGHT, '
+                'Laser_Status, LED_Status, ToF_Dist1_cm, ToF_Dist2_cm, '
+                'gnss_gap_ms, video_offset_ms, site_name, image_data, '
+                'track_id, pixel_width, mask_width, focal_mm, sensor_width_mm'
+                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                tree_id, 0, 0, 0, 'Pending',
+                recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
+                r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
+                r['rtk_tag'], r['rtk_height_m'],
+                r['laser_status'], r['led_status'],
+                int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
+                r['gnss_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
+                r.get('track_id'), r.get('pixel_width'), r.get('mask_width'),
+                r.get('focal_mm'), r.get('sensor_width_mm'),
+            )
+        conn.commit()
+        return {'status': 'success', 'inserted': len(records), 'tree_id': tree_id}
+    except Exception as e:
+        conn.rollback()
+        return {'status': 'error', 'message': f'寫入 Measurements 失敗：{str(e)}'}
+    finally:
+        conn.close()
+
+
+# ── 時間對齊管線寫入（Arduino/RTK 對齊後的原始感測器資料，舊版暫存表，目前未使用）
+# 負責人：蔡宗倫
+# 開發日期：2026/08/22
+def save_sensor_sync_records(records: list) -> dict:
+    """寫入時間對齊後的原始感測器資料（Sensor_Sync_Records）。
+    此表僅存放 merge_data.py 對齊完的中繼資料，供之後影像追蹤（tracker）與
+    樹徑計算完成後，配合 track_id 寫入正式的 Trees / Measurements。
+    records 為 list of dict，欄位需對應 sql/create_tables.sql 中 Sensor_Sync_Records 的定義。
+    """
+    if not records:
+        return {'status': 'success', 'inserted': 0}
+
+    conn = get_db_connection()
+    if conn is None:
+        return {'status': 'error', 'message': '資料庫連線失敗'}
+    try:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO Sensor_Sync_Records (
+                merge_batch_id, arduino_tree_id, recorded_at,
+                latitude, longitude, rtk_height_m, rtk_speed_mps, rtk_heading_deg, rtk_tag,
+                laser_status, led_status, tof_dist1_cm, tof_dist2_cm,
+                gnss_gap_ms, video_offset_ms, video_filename
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r['merge_batch_id'], r['arduino_tree_id'], r['recorded_at'],
+                    r['latitude'], r['longitude'], r['rtk_height_m'], r['rtk_speed_mps'],
+                    r['rtk_heading_deg'], r['rtk_tag'],
+                    r['laser_status'], r['led_status'], r['tof_dist1_cm'], r['tof_dist2_cm'],
+                    r['gnss_gap_ms'], r['video_offset_ms'], r['video_filename'],
+                )
+                for r in records
+            ]
+        )
+        conn.commit()
+        return {'status': 'success', 'inserted': len(records)}
+    except Exception as e:
+        conn.rollback()
+        return {'status': 'error', 'message': f'寫入 Sensor_Sync_Records 失敗：{str(e)}'}
+    finally:
+        conn.close()
+
+
+# 張恆輔 8/25新增：'25.0883747N' 這種字串轉成帶正負號的十進位度數，S/W 為負
+def _parse_coord(raw):
+    if not raw:
+        return None
+    raw = raw.strip()
+    direction = raw[-1].upper()
+    if direction not in ('N', 'S', 'E', 'W'):
+        return None
+    try:
+        value = float(raw[:-1])
+    except ValueError:
+        return None
+    return -value if direction in ('S', 'W') else value
+
+
+# ── 後台管理：樹木清單（僅 pending）───────────────────────────────
+# 張恆輔 8/29修正：補回 recorded_at（JOIN Measurements 取得 DATE/TIME）
+# v_AdminPendingQueue 已改為 LEFT JOIN 並補上緯度／經度欄位，
+# 直接查這張 view 即可（view 內部已經用 WHERE m.status = N'Pending' 篩選過）。
+def get_all_trees_admin():
+    """後台用：回傳待審核清單。"""
+    conn = get_db_connection()
+    if conn is None:
+        return []
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                v.紀錄編號     AS id,
+                v.Tree_ID      AS tree_id,
+                v.樹木種類     AS species,
+                v.樹徑cm       AS dbh,
+                v.固碳量       AS carbon,
+                v.巡檢案場     AS site,
+                v.緯度         AS lat_raw,
+                v.經度         AS lng_raw,
+                v.樹木照片二進位 AS image_bin,
+                m.[DATE]       AS measure_date,
+                m.[TIME]       AS measure_time
+            FROM v_AdminPendingQueue v
+            JOIN Measurements m ON m.record_id = v.紀錄編號
+            WHERE m.Final_Dist_cm IS NOT NULL
+        """)
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        trees = []
+        for row in rows:
+            recorded_at = ' '.join(
+                part for part in (row['measure_date'], row['measure_time']) if part
+            )
+            trees.append({
+                'id': row['id'],
+                'tree_id': row['tree_id'],
+                'species': row['species'],
+                'dbh': float(row['dbh']) if row['dbh'] is not None else None,
+                'carbon': float(row['carbon']) if row['carbon'] is not None else None,
+                'lat': _parse_coord(row['lat_raw']),
+                'lng': _parse_coord(row['lng_raw']),
+                'site': row['site'],
+                'status': 'pending',
+                'recorded_at': recorded_at or None,
+                'img': _img_bin_to_data_uri(row['image_bin']),
+            })
+        return trees
+    except Exception as e:
+        print(f"get_all_trees_admin 查詢失敗: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+# 負責人：陳政雍 8/27 完成確認／刪除功能：實作 update_tree_status()、delete_tree()
+# 張恆輔 8/29修正：dbh／carbon 參數在之前的合併中被覆蓋掉了，導致
+# routes/admin.py 呼叫時傳入 dbh=/carbon= 會直接 TypeError（確認按鈕壞掉）。
+#
+# 負責人：Morris，開發日期：2026/09/12
+# 改名為 admin_update_measurement()，不再接受前端直接傳入 carbon——固碳量
+# 一定要是「樹徑 × 樹種係數」算出來的，不能讓使用者手動填一個對不起來的
+# 數字。species 存在 Trees（同一 Tree_ID 底下其他紀錄會一併受影響），
+# dbh 存在 Measurements、只影響這一筆。兩者更新完（不管是剛改的，還是
+# 本來就有的）只要備齊，就重新算一次固碳量寫回，確保不會停在舊數字。
+def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=None) -> bool:
+    """後台：更新 Measurements 審核狀態，可一併更新樹徑／樹種，並重新計算
+    固碳量。回傳 True 表示更新成功（有找到該筆）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT Tree_ID, dbh FROM Measurements WHERE record_id = ?', record_id)
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        current_tree_id, current_dbh = row
+
+        if dbh is not None:
+            cursor.execute('UPDATE Measurements SET dbh = ? WHERE record_id = ?', dbh, record_id)
+            current_dbh = dbh
+
+        if species is not None and current_tree_id is not None:
+            species_id = _get_or_create_species(cursor, species)
+            cursor.execute(
+                'UPDATE Trees SET species_id = ? WHERE Tree_ID = ?',
+                species_id, current_tree_id
+            )
+
+        cursor.execute(
+            'UPDATE Measurements SET status = ? WHERE record_id = ?',
+            new_status, record_id
+        )
+        found = cursor.rowcount > 0
+
+        if current_tree_id is not None and current_dbh is not None and current_dbh > 0:
+            cursor.execute("""
+                SELECT s.allo_param_a, s.allo_param_b, s.carbon_fraction
+                FROM Trees t
+                JOIN Species_Ref s ON s.species_id = t.species_id
+                WHERE t.Tree_ID = ?
+            """, current_tree_id)
+            species_row = cursor.fetchone()
+            if species_row is not None:
+                allo_a, allo_b, carbon_fraction = species_row
+                result = calculate_carbon(
+                    dbh=float(current_dbh),
+                    allo_param_a=float(allo_a) if allo_a is not None else None,
+                    allo_param_b=float(allo_b) if allo_b is not None else None,
+                    carbon_fraction=float(carbon_fraction) if carbon_fraction is not None else None,
+                )
+                if result.error is None:
+                    cursor.execute(
+                        'UPDATE Measurements SET biomass = ?, carbon_absorpation = ? WHERE record_id = ?',
+                        result.biomass_kg, result.carbon_kg, record_id
+                    )
+
+        conn.commit()
+        return found
+    except Exception as e:
+        print(f"admin_update_measurement 更新失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+# 張恆輔 8/25新增
+# 2026/09/16修改：改成刪除該筆記錄對應的 Tree_ID 底下所有 Measurements
+# 記錄，而不是只刪一筆——同一棵樹（同一個 Tree_ID）在後台清單上可能有
+# 多筆量測紀錄，刪除其中一筆時使用者預期整棵樹的資料都一併清掉。
+def delete_tree(record_id: int) -> bool:
+    """後台：刪除指定 Measurements 記錄所屬 Tree_ID 底下的所有記錄。
+    回傳 True 表示刪除成功（有找到該筆）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT Tree_ID FROM Measurements WHERE record_id = ?", record_id)
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        tree_id = row[0]
+
+        cursor.execute("DELETE FROM Measurements WHERE Tree_ID = ?", tree_id)
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"delete_tree 刪除失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+# ── 後台管理：使用者帳號 ─────────────────────────────────────────
+# 陳政雍 8/1修改
+def get_user_by_username(username: str):
+    """登入驗證用：查詢帳號，回傳 dict（含 admin_id, username, password_hash）或 None。"""
+    conn = get_db_connection()
+    if conn is None:
+        return None
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT admin_id, username, password_hash FROM Admins WHERE username = ?",
+            username
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        columns = [col[0] for col in cursor.description]
+        return dict(zip(columns, row))
+    except Exception as e:
+        print(f"get_user_by_username 查詢失敗: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+# 陳政雍 8/1修改
+def create_admin_user(username: str, password_hash: str) -> bool:
+    """初始化工具用：新增管理員帳號（由 scripts/create_admin.py 呼叫）。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Admins (username, password_hash) VALUES (?, ?)",
+            username, password_hash
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"create_admin_user 寫入失敗: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+# ── CLI 工具寫入（供 Tree-Trunk-Segmentation/main.py 的桌面版呼叫）
+def insert_record_with_location(species, dbh, carbon, lat, lon, thumbnail_data=None):
+    """CLI 桌面工具用：儲存含 GPS 座標的辨識紀錄。"""
+    # TODO: 待實作 — 負責人：____
+    raise NotImplementedError("此函式尚未實作")

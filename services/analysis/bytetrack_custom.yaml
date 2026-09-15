@@ -1,0 +1,17 @@
+# 從 ultralytics 內建的 bytetrack.yaml 複製出來的可調版本
+# 用途：track_buffer / match_thresh 這類參數不能直接當 .track() 的參數傳入，
+#       只能透過修改這個設定檔、再用 tracker="bytetrack_custom.yaml" 指向它來調整。
+# 文件：https://docs.ultralytics.com/modes/track
+
+tracker_type: bytetrack
+
+track_high_thresh: 0.25   # 第一階段配對門檻，調高追蹤更嚴格（雜訊變少但漏配也變多）
+track_low_thresh: 0.1     # 第二階段（低分框）配對門檻
+new_track_thresh: 0.25    # 沒配對成功時，信心值超過這個門檻才會建立新的 track_id
+
+track_buffer: 30          # 物體消失後，追蹤狀態保留幾幀。調大可以撐過較長的遮擋，
+                           # 但也更容易把「消失又出現的不同物體」誤接成同一個 track_id
+
+match_thresh: 0.8         # IoU 配對相似度門檻，值越高配對越嚴格
+
+fuse_score: True

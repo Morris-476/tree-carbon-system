@@ -4,10 +4,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!mapEl) return;
 
     // 淡江大學校園座標
-    const map = L.map('treeMap').setView([25.1745, 121.4502], 17);
+    const map = L.map('treeMap').setView([25.1745, 121.4502], 19);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19
     }).addTo(map);
 
     const pinIcon = L.divIcon({
@@ -47,14 +48,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const info = document.createElement('div');
         info.className = 'tree-info-card-info';
 
-        const coordText = (isEmpty(tree.latitude) || isEmpty(tree.longitude))
-            ? '尚無資料'
-            : `${tree.latitude}, ${tree.longitude}`;
-
+        //陳政雍 8/30 Map資訊卡的連結
         const rows = [
-            ['樹種名：', formatValue(tree.species_name)],
-            ['樹木固碳量：', formatValue(tree.carbon_absorpation)],
-            ['經緯度：', coordText]
+            ['樹種：', formatValue(tree.species_name)],
+            ['樹徑：', isEmpty(tree.dbh) ? '尚無資料' : `${tree.dbh} cm`],
+            ['固碳量：', isEmpty(tree.carbon_absorpation) ? '尚無資料' : `${tree.carbon_absorpation} kg`]
         ];
 
         rows.forEach(([label, value]) => {

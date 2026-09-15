@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}簡易固碳測量{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='measure/styles.css') }}" />
+{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <section class="workspace">
+    <form id="analysisForm" class="control-panel">
+      <div class="section-title">
+        <span>01</span>
+        <h2>上傳照片</h2>
+      </div>
+
+      <label id="dropZone" class="upload-zone" for="imageInput">
+        <input id="imageInput" type="file" accept="image/*" multiple />
+        <strong>拖曳照片到這裡，或點擊選擇多張圖片</strong>
+        <span>每一批次會套用同一組手機、距離與樹種參數</span>
+      </label>
+
+      <div class="preview-header">
+        <p>已選照片</p>
+        <span id="fileCount">0 張</span>
+      </div>
+      <div id="previewGrid" class="preview-grid" aria-live="polite">
+        <div class="empty-state">尚未選擇圖片</div>
+      </div>
+
+      <div class="section-title settings-title">
+        <span>02</span>
+        <h2>分析設定</h2>
+      </div>
+
+      <div class="settings-grid">
+        <label class="field">
+          <span>樹種</span>
+          <select id="speciesSelect" required>
+            <option value="">載入樹種中...</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>樹齡（選填）</span>
+          <select id="treeAgeSelect">
+            <option value="">不填寫（使用預設值）</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>手機型號</span>
+          <select id="phoneSelect" required>
+            <option value="">請選擇手機型號</option>
+            <option value="iPhone 13">iPhone 13</option>
+            <option value="iPhone 13 Pro">iPhone 13 Pro</option>
+            <option value="iPhone 14">iPhone 14</option>
+            <option value="iPhone 14 Pro">iPhone 14 Pro</option>
+            <option value="iPhone 15">iPhone 15</option>
+            <option value="iPhone 15 Pro">iPhone 15 Pro</option>
+            <option value="iPhone 16">iPhone 16</option>
+            <option value="iPhone 16 Pro">iPhone 16 Pro</option>
+            <option value="Samsung Galaxy S24 Ultra">Samsung Galaxy S24 Ultra</option>
+            <option value="其他">其他（手動輸入）</option>
+          </select>
+        </label>
+
+        <div class="field distance-field">
+          <span>拍攝距離</span>
+          <div class="range-row">
+            <input id="distanceRange" type="range" min="1" max="7" step="0.5" value="2" />
+            <label class="distance-box">
+              <input id="distanceInput" type="number" min="1" max="7" step="0.5" value="2.0" />
+              <span>公尺</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div id="customCameraFields" class="custom-camera is-hidden">
+        <label class="field">
+          <span>焦距</span>
+          <div class="unit-input">
+            <input id="focalInput" type="number" min="1" step="0.1" placeholder="例如 26" />
+            <span>mm</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>感光元件寬度</span>
+          <div class="unit-input">
+            <input id="sensorWidthInput" type="number" min="1" step="0.1" placeholder="例如 7.6" />
+            <span>mm</span>
+          </div>
+        </label>
+      </div>
+
+      <p id="formMessage" class="form-message" role="alert"></p>
+
+      <button id="analyzeButton" class="primary-action" type="submit">
+        開始分析
+      </button>
+    </form>
+
+    <section class="result-panel" aria-live="polite">
+      <div class="result-topline">
+        <div class="section-title">
+          <span>03</span>
+          <h2>分析結果</h2>
+        </div>
+        <div class="result-actions">
+          <div id="successSummary" class="success-summary">成功辨識：0 / 0 張</div>
+          <button id="resetButton" class="reset-action is-hidden" type="button">重新分析</button>
+        </div>
+      </div>
+
+      <div id="progressArea" class="progress-area is-hidden">
+        <div class="progress-track">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <span id="progressText">分析中...</span>
+      </div>
+
+      <div id="resultsList" class="results-list">
+        <div class="result-empty">
+          上方完成設定並開始分析後，結果會顯示在這裡。
+        </div>
+      </div>
+    </section>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='measure/app.js') }}"></script>
+{% endblock %}

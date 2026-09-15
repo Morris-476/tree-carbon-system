@@ -8,4 +8,12 @@ opencv-python>=4.8
 numpy>=1.24
 ultralytics>=8.0
 python-dotenv>=1.0
+lap
 pandas>=1.5
+
+# 樹種辨識（services/species_classifier.py）
+torch
+ftfy
+regex
+tqdm
+git+https://github.com/openai/CLIP.git
