@@ -895,14 +895,24 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
 
 
 # 張恆輔 8/25新增
-def delete_tree(tree_id: int) -> bool:
-    """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功（有找到該筆）。"""
+# 2026/09/16修改：改成刪除該筆記錄對應的 Tree_ID 底下所有 Measurements
+# 記錄，而不是只刪一筆——同一棵樹（同一個 Tree_ID）在後台清單上可能有
+# 多筆量測紀錄，刪除其中一筆時使用者預期整棵樹的資料都一併清掉。
+def delete_tree(record_id: int) -> bool:
+    """後台：刪除指定 Measurements 記錄所屬 Tree_ID 底下的所有記錄。
+    回傳 True 表示刪除成功（有找到該筆）。"""
     conn = get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM Measurements WHERE record_id = ?", tree_id)
+        cursor.execute("SELECT Tree_ID FROM Measurements WHERE record_id = ?", record_id)
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        tree_id = row[0]
+
+        cursor.execute("DELETE FROM Measurements WHERE Tree_ID = ?", tree_id)
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:
