@@ -12,6 +12,7 @@ from flask import Flask
 from routes.pages import pages_bp
 from routes.api import api_bp
 from routes.admin import admin_bp
+from routes.measure import measure_bp
 import config
 
 app = Flask(__name__)
@@ -22,6 +23,7 @@ app.json.sort_keys = False
 app.register_blueprint(pages_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(measure_bp)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
