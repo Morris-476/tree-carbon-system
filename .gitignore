@@ -36,6 +36,7 @@ cloudflared*
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 
 # 系統檔
