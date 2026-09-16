@@ -1,6 +1,8 @@
 # 負責人：Jump0423
 # 用途：/measure 頁面的主流程，串接樹幹偵測→樹徑量測→固碳計算→結果包裝→標註圖繪製
 
+from __future__ import annotations
+
 import datetime
 
 import numpy as np
