@@ -43,8 +43,8 @@ from typing import Optional
 
 import cv2
 
-from services import merge_data
-from services import db as db_service
+from services.core import merge_data
+from services.core import db as db_service
 from services.analysis.tracker import TreeTracker
 from services.analysis import tree_analysis
 from services.analysis.tree_coordinate import recalculate_tree_coordinates

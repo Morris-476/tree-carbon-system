@@ -2,7 +2,7 @@
 # 開發日期：2026/09/12
 # 用途：固碳量計算批次腳本，跟 tree_diameter.py 同一種模式——離線執行，
 #      排在樹徑換算、樹種辨識都完成之後。讀取已知樹種、已算出樹徑、但
-#      固碳量還沒算的代表紀錄，呼叫 services/carbon.py 的異速生長公式，
+#      固碳量還沒算的代表紀錄，呼叫 services/core/carbon.py 的異速生長公式，
 #      把結果寫回 Measurements.biomass／carbon_absorpation。
 import os
 
@@ -10,8 +10,8 @@ if __name__ == '__main__':
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
-from services import db as db_service
-from services.carbon import calculate_carbon
+from services.core import db as db_service
+from services.core.carbon import calculate_carbon
 
 
 def calculate_pending_carbon() -> dict:

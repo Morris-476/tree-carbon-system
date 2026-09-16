@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from services import db as db_service
+from services.core import db as db_service
 
 # ========== 設定 ==========
 MIN_RECORDS = 2       # 少於此筆數標記為存疑
