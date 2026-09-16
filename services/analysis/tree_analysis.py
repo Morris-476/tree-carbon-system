@@ -5,7 +5,7 @@ from services.core import db as db_service
 
 # ========== 設定 ==========
 MIN_RECORDS = 2       # 少於此筆數標記為存疑
-GAP_SECONDS = 2       # 間隔超過幾秒視為不同棵樹
+GAP_SECONDS = 2       # 同一站點的 track_id 時間序列，間隔超過幾秒視為換了一部影片
 MAX_VALID_DIST = 800  # ToF 有效距離上限（cm）
 
 
