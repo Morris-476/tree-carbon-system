@@ -448,14 +448,15 @@ def insert_tree_coordinate(latitude, longitude, tracker_id=None) -> int:
 
 # 負責人：Morris
 # 開發日期：2026/09/12
-# 用途：修正 tree_coordinate.py 每次上傳都重新新增重複 Trees 記錄的 bug。
-# 判斷「這個 site_name + track_id 組合是不是已經算過真實座標」，用 Trees.tracker_id
-# 是否等於這筆量測自己的 track_id 判斷（真實座標新增時 tracker_id 就是設成
-# 這個值，上傳當下的佔位 Tree 則不是），避免不同影片剛好 track_id 撞號也被
-# 誤判成同一棵樹。track_id 為 None（舊式無追蹤資料）時無法用這個方式判斷，
-# 呼叫端不應該對這種資料呼叫本函式。
-def find_linked_tree_id(site_name, track_id):
-    """回傳已經算過真實座標、且 tracker_id 對得上的 Tree_ID；找不到回傳 None。"""
+# 2026/09/16修正：原本只比對 (site_name, track_id)，但同一個 site_name 常
+# 對到好幾次不同時間的上傳，track_id 每次都從頭編號，會把不同批次剛好撞號
+# 的樹誤判成同一棵。改成一併比對 tree_analysis.py 算好、寫回
+# Measurements.video_seq 的批次序號，兩邊分群 key 才會對齊。
+# 用 Trees.tracker_id 是否等於這筆量測自己的 track_id 判斷是否為真實座標
+# （佔位 Tree 的 tracker_id 是亂數接續值，不會等於任何 track_id）。
+def find_linked_tree_id(site_name, track_id, video_seq):
+    """回傳已經算過真實座標、且 (site_name, video_seq, track_id) 對得上的
+    Tree_ID；找不到回傳 None。"""
     conn = get_db_connection()
     if conn is None:
         raise RuntimeError('資料庫連線失敗，無法查詢既有 Tree_ID')
@@ -465,26 +466,40 @@ def find_linked_tree_id(site_name, track_id):
             SELECT TOP 1 m.Tree_ID
             FROM Measurements m
             JOIN Trees t ON t.Tree_ID = m.Tree_ID
-            WHERE m.site_name = ? AND m.track_id = ? AND t.tracker_id = m.track_id
-        """, site_name, track_id)
+            WHERE m.site_name = ? AND m.track_id = ? AND m.video_seq = ?
+              AND t.tracker_id = m.track_id
+        """, site_name, track_id, video_seq)
         row = cursor.fetchone()
         return row[0] if row is not None else None
     finally:
         conn.close()
 
 
-def link_measurement_to_tree(record_id, tree_id) -> None:
-    """把代表紀錄的 Measurements.Tree_ID 改成算出真實座標後對應的 Tree_ID，
-    取代上傳當下寫入的佔位 Tree_ID。"""
+# 2026/09/16修正：原本只把「代表那一秒」的 Tree_ID 填進去，同一棵樹其他
+# 秒數的原始紀錄永遠留在 NULL。改成同一群（site_name+video_seq+track_id）
+# 全部一起填，這樣同一棵樹的每一秒都能正確對應到它的 Tree_ID。
+def link_measurement_to_tree(site_name, video_seq, track_id, tree_id) -> None:
+    """把這一棵樹（同一 site_name+video_seq+track_id）底下所有 Measurements
+    紀錄的 Tree_ID，一次填成算出真實座標後對應的 Tree_ID。"""
     conn = get_db_connection()
     if conn is None:
         raise RuntimeError('資料庫連線失敗，無法更新 Measurements.Tree_ID')
     try:
         cursor = conn.cursor()
-        cursor.execute(
-            'UPDATE Measurements SET Tree_ID = ? WHERE record_id = ?',
-            tree_id, record_id
-        )
+        # track_id 可能是 None（舊式無追蹤資料），SQL 的 = 比對 NULL 一律
+        # 不成立，要改用 IS NULL，否則這種資料會完全更新不到任何一筆。
+        if track_id is None:
+            cursor.execute(
+                'UPDATE Measurements SET Tree_ID = ? '
+                'WHERE site_name = ? AND video_seq = ? AND track_id IS NULL',
+                tree_id, site_name, video_seq
+            )
+        else:
+            cursor.execute(
+                'UPDATE Measurements SET Tree_ID = ? '
+                'WHERE site_name = ? AND video_seq = ? AND track_id = ?',
+                tree_id, site_name, video_seq, track_id
+            )
         conn.commit()
     finally:
         conn.close()
@@ -545,6 +560,8 @@ def update_tree_species(tree_id, species_id) -> None:
 # 開發日期：2026/09/12
 # 用途：供 services/analysis/tree_diameter.py 使用，找出「已經有代表距離
 # （Final_Dist_cm），但樹徑（dbh）還沒算出來」的代表紀錄。
+# 2026/09/16修正：pixel_width 改讀 Final_Pixel_Width（tree_analysis.py 用
+# 整群像素寬度 IQR 平均後的結果），不再只看代表列自己那一秒量到的單一值。
 def get_measurements_needing_diameter() -> list:
     """回傳 [{'record_id', 'pixel_width', 'mask_width', 'distance_cm',
     'focal_mm', 'sensor_width_mm'}, ...]，dbh 還是 0、且換算需要的欄位都
@@ -557,7 +574,7 @@ def get_measurements_needing_diameter() -> list:
         cursor.execute("""
             SELECT
                 record_id,
-                pixel_width,
+                Final_Pixel_Width AS pixel_width,
                 mask_width,
                 Final_Dist_cm AS distance_cm,
                 focal_mm,
@@ -565,7 +582,7 @@ def get_measurements_needing_diameter() -> list:
             FROM Measurements
             WHERE dbh = 0
               AND Final_Dist_cm IS NOT NULL
-              AND pixel_width IS NOT NULL
+              AND Final_Pixel_Width IS NOT NULL
               AND mask_width IS NOT NULL
               AND focal_mm IS NOT NULL
               AND sensor_width_mm IS NOT NULL
@@ -645,8 +662,9 @@ def update_measurement_carbon(record_id, biomass, carbon_absorpation) -> None:
 
 def save_time_synced_measurements(records: list, site_name) -> dict:
     """把時間對齊後的資料（含每筆對應的影片截圖）寫入 dbo.Measurements。
-    整批資料視為同一次量測（同一支影片、同一棵樹），只建立一筆 Trees 記錄
-    （用第一筆有 GPS 座標的資料當樹的位置），所有秒數的量測都指向同一個 Tree_ID。
+    Tree_ID 先留 NULL，等 tree_coordinate.py 依 track_id 分群、算出正式
+    Tree_ID 後才回填（見該檔案 2026/09/16修正說明），不再對整批資料建立
+    單一佔位 Tree，避免一堆不相干的紀錄暫時共用同一個假 Tree_ID。
 
     track_id／pixel_width 是呼叫端（data_pipeline.run_upload_and_save）跑完
     TreeTracker 後配對好的追蹤結果，沒配對到（或沒上傳影片）時為 None。
@@ -665,14 +683,6 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
         cursor = conn.cursor()
         _ensure_schema_ready(cursor)
 
-        first_gps = next(
-            (r for r in records if r['latitude'] is not None and r['longitude'] is not None),
-            None
-        )
-        lat_str = _coord_to_str(first_gps['latitude'], 'N', 'S') if first_gps else None
-        lon_str = _coord_to_str(first_gps['longitude'], 'E', 'W') if first_gps else None
-        tree_id = _get_or_create_tree_id(cursor, None, None, lat_str, lon_str)
-
         for r in records:
             recorded_at = r['recorded_at']
             cursor.execute(
@@ -683,7 +693,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 'gnss_gap_ms, video_offset_ms, site_name, image_data, '
                 'track_id, pixel_width, mask_width, focal_mm, sensor_width_mm'
                 ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                tree_id, 0, 0, 0, 'Pending',
+                None, 0, 0, 0, 'Pending',
                 recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
                 r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
                 r['rtk_tag'], r['rtk_height_m'],
@@ -694,7 +704,7 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 r.get('focal_mm'), r.get('sensor_width_mm'),
             )
         conn.commit()
-        return {'status': 'success', 'inserted': len(records), 'tree_id': tree_id}
+        return {'status': 'success', 'inserted': len(records), 'tree_id': None}
     except Exception as e:
         conn.rollback()
         return {'status': 'error', 'message': f'寫入 Measurements 失敗：{str(e)}'}
@@ -767,6 +777,9 @@ def _parse_coord(raw):
 # 張恆輔 8/29修正：補回 recorded_at（JOIN Measurements 取得 DATE/TIME）
 # v_AdminPendingQueue 已改為 LEFT JOIN 並補上緯度／經度欄位，
 # 直接查這張 view 即可（view 內部已經用 WHERE m.status = N'Pending' 篩選過）。
+# 2026/09/16修正：加上 t.tracker_id = m.track_id，排除代表紀錄座標推算
+# 失敗、還卡在上傳當下佔位 Tree_ID 的孤兒紀錄（座標其實是整支影片開始那
+# 一刻推車的位置，跟這棵樹無關，不該讓管理員誤核准）。
 def get_all_trees_admin():
     """後台用：回傳待審核清單。"""
     conn = get_db_connection()
@@ -789,7 +802,10 @@ def get_all_trees_admin():
                 m.[TIME]       AS measure_time
             FROM v_AdminPendingQueue v
             JOIN Measurements m ON m.record_id = v.紀錄編號
+            JOIN Trees t ON t.Tree_ID = m.Tree_ID
             WHERE m.Final_Dist_cm IS NOT NULL
+              AND m.track_id IS NOT NULL
+              AND t.tracker_id = m.track_id
         """)
         columns = [col[0] for col in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -830,20 +846,32 @@ def get_all_trees_admin():
 # 數字。species 存在 Trees（同一 Tree_ID 底下其他紀錄會一併受影響），
 # dbh 存在 Measurements、只影響這一筆。兩者更新完（不管是剛改的，還是
 # 本來就有的）只要備齊，就重新算一次固碳量寫回，確保不會停在舊數字。
-def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=None) -> bool:
+#
+# 2026/09/16修正：核准（Approved）前完全沒檢查照片/樹徑/座標是否存在，
+# 缺件的紀錄一旦被誤核准就會直接顯示在前端。改成核准時多檢查這幾項，
+# 缺件就擋下、回傳原因，不寫入 status（已送出的 dbh／species 仍會保留）。
+def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=None):
     """後台：更新 Measurements 審核狀態，可一併更新樹徑／樹種，並重新計算
-    固碳量。回傳 True 表示更新成功（有找到該筆）。"""
+    固碳量。回傳 (success, error_message)；success 為 False 時 error_message
+    說明找不到紀錄或缺哪些資料無法核准。"""
     conn = get_db_connection()
     if conn is None:
-        return False
+        return False, '資料庫連線失敗'
     try:
         cursor = conn.cursor()
 
-        cursor.execute('SELECT Tree_ID, dbh FROM Measurements WHERE record_id = ?', record_id)
+        cursor.execute("""
+            SELECT m.Tree_ID, m.dbh, m.image_data, m.track_id,
+                   t.tracker_id, t.[LATITUDE N/S], t.[LONGITUDE E/W]
+            FROM Measurements m
+            LEFT JOIN Trees t ON t.Tree_ID = m.Tree_ID
+            WHERE m.record_id = ?
+        """, record_id)
         row = cursor.fetchone()
         if row is None:
-            return False
-        current_tree_id, current_dbh = row
+            return False, '查無此筆資料'
+        (current_tree_id, current_dbh, image_data, m_track_id,
+         t_tracker_id, lat_raw, lng_raw) = row
 
         if dbh is not None:
             cursor.execute('UPDATE Measurements SET dbh = ? WHERE record_id = ?', dbh, record_id)
@@ -855,6 +883,20 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
                 'UPDATE Trees SET species_id = ? WHERE Tree_ID = ?',
                 species_id, current_tree_id
             )
+
+        if new_status == 'Approved':
+            missing = []
+            if not image_data:
+                missing.append('照片')
+            if current_dbh is None or current_dbh <= 0:
+                missing.append('樹徑')
+            if lat_raw is None or lng_raw is None:
+                missing.append('座標')
+            if m_track_id is None or t_tracker_id != m_track_id:
+                missing.append('Tree_ID 對應關係尚未確認')
+            if missing:
+                conn.commit()
+                return False, f"資料不完整（缺少：{'、'.join(missing)}），無法核准"
 
         cursor.execute(
             'UPDATE Measurements SET status = ? WHERE record_id = ?',
@@ -885,26 +927,42 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
                     )
 
         conn.commit()
-        return found
+        return found, (None if found else '查無此筆資料')
     except Exception as e:
         print(f"admin_update_measurement 更新失敗: {e}")
         conn.rollback()
-        return False
+        return False, '更新失敗，發生系統錯誤'
     finally:
         conn.close()
 
 
 # 張恆輔 8/25新增
-def delete_tree(tree_id: int) -> bool:
-    """後台：刪除一筆 Measurements 記錄。回傳 True 表示刪除成功（有找到該筆）。"""
+# 2026/09/16修正：同一棵樹現在每一秒的原始紀錄都會指到同一個 Tree_ID
+# （見 link_measurement_to_tree 說明），只刪這一筆代表列會留下一堆刪不掉
+# 的孤兒資料。改成刪除時連同這個 Tree_ID 底下所有 Measurements 紀錄、
+# 以及 Trees 那一筆本身一起刪。Tree_ID 還是 NULL（尚未分析出正式
+# Tree_ID）時，退回只刪這一筆。
+def delete_tree(record_id: int) -> bool:
+    """後台：刪除指定紀錄所屬 Tree_ID 底下所有資料。回傳 True 表示刪除
+    成功（有找到該筆）。"""
     conn = get_db_connection()
     if conn is None:
         return False
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM Measurements WHERE record_id = ?", tree_id)
+        cursor.execute("SELECT Tree_ID FROM Measurements WHERE record_id = ?", record_id)
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        tree_id = row[0]
+
+        if tree_id is None:
+            cursor.execute("DELETE FROM Measurements WHERE record_id = ?", record_id)
+        else:
+            cursor.execute("DELETE FROM Measurements WHERE Tree_ID = ?", tree_id)
+            cursor.execute("DELETE FROM Trees WHERE Tree_ID = ?", tree_id)
         conn.commit()
-        return cursor.rowcount > 0
+        return True
     except Exception as e:
         print(f"delete_tree 刪除失敗: {e}")
         conn.rollback()

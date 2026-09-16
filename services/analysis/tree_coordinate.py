@@ -13,6 +13,13 @@ Tree_ID，沒有才新增；算完（不管沿用或新增）都用 link_measure
 已知限制：track_id 為 None 的舊式無追蹤資料，沒有可靠的欄位能判斷兩筆
 「同一棵樹」，這種資料維持原本的行為——每次都新增一筆，未解決重複問題，
 影響範圍限定在沒有 track_id 的舊式資料。
+
+2026/09/16修正：find_linked_tree_id() 原本只比對 (site_name, track_id)，
+但同一個 site_name 可能對到好幾次不同時間的上傳，track_id 會撞號，改成
+一併比對 tree_analysis.py 寫回的 video_seq。上傳當下也不再建立佔位
+Tree_ID（Measurements.Tree_ID 先留 NULL），link_measurement_to_tree()
+改成一次把同一棵樹（同 site_name+video_seq+track_id）所有秒數的紀錄都
+填上正式 Tree_ID，不再只填代表那一秒。
 """
 import os
 
@@ -28,18 +35,19 @@ from services.geo import compute_tree_coordinate
 
 
 def load_measurements_for_coordinate() -> list:
-    """讀取可用於座標推算的量測資料：record_id、site_name、track_id、推車
-    GNSS 座標、方位角、Final_Dist_cm。latitude／longitude／HEADING／
-    Final_Dist_cm 缺一不可，依 record_id 排序，新增到 Trees 的順序才會跟
-    Measurements 一致。site_name 是判斷「這棵樹算過了沒」必要的欄位
-    （見 find_linked_tree_id() 說明）。"""
+    """讀取可用於座標推算的量測資料：record_id、site_name、track_id、
+    video_seq、推車 GNSS 座標、方位角、Final_Dist_cm。latitude／longitude／
+    HEADING／Final_Dist_cm 缺一不可，依 record_id 排序，新增到 Trees 的
+    順序才會跟 Measurements 一致。site_name＋video_seq＋track_id 是判斷
+    「這棵樹算過了沒」必要的欄位（見 find_linked_tree_id() 說明）。"""
     conn = db_service.get_db_connection()
     if conn is None:
         raise RuntimeError("資料庫連線失敗，無法讀取 Measurements 資料")
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT record_id, site_name, track_id, latitude, longitude, HEADING, Final_Dist_cm
+            SELECT record_id, site_name, track_id, video_seq,
+                   latitude, longitude, HEADING, Final_Dist_cm
             FROM Measurements
             WHERE latitude IS NOT NULL
               AND longitude IS NOT NULL
@@ -72,7 +80,9 @@ def recalculate_tree_coordinates() -> dict:
 
         tree_id = None
         if row['track_id'] is not None:
-            tree_id = db_service.find_linked_tree_id(row['site_name'], row['track_id'])
+            tree_id = db_service.find_linked_tree_id(
+                row['site_name'], row['track_id'], row['video_seq']
+            )
 
         if tree_id is not None:
             print(f"= record_id={row['record_id']} → 沿用既有 Tree_ID={tree_id}")
@@ -85,7 +95,9 @@ def recalculate_tree_coordinates() -> dict:
                   f"{result.latitude:.7f}, {result.longitude:.7f}")
             inserted += 1
 
-        db_service.link_measurement_to_tree(row['record_id'], tree_id)
+        db_service.link_measurement_to_tree(
+            row['site_name'], row['video_seq'], row['track_id'], tree_id
+        )
 
     print(f"\n共新增 {inserted} 筆、沿用 {reused} 筆 Trees 記錄（略過 {skipped} 筆）")
     return {'inserted': inserted, 'reused': reused, 'skipped': skipped}

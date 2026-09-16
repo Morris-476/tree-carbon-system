@@ -129,8 +129,9 @@ def api_update_tree(tree_id: int):
     if species is not None and not isinstance(species, str):
         return jsonify({'error': 'species 格式錯誤'}), 400
 
-    if not db_service.admin_update_measurement(tree_id, new_status, dbh=dbh, species=species):
-        return jsonify({'error': '更新失敗，查無此筆資料'}), 400
+    success, error = db_service.admin_update_measurement(tree_id, new_status, dbh=dbh, species=species)
+    if not success:
+        return jsonify({'error': error or '更新失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
 
 
