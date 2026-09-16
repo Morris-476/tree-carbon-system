@@ -441,6 +441,8 @@ a {
 .img-modal-box {
     width: 100%;
     max-width: 360px;
+    max-height: 90vh;
+    overflow-y: auto;
     border: 1px solid #000;
     background: #fff;
 }
@@ -456,11 +458,14 @@ a {
     padding: 20px;
 }
 
+/* 2026/09/16修正：實際拍攝影片是直式 1080x1920（9:16），原本寫死 4:3
+   會被 object-fit: cover 從正中央裁掉上下大半，樹幹基部常常被裁掉、
+   看起來像拍太高，改成符合實際比例。 */
 .img-modal-placeholder,
 .img-modal-img {
     display: block;
     width: 100%;
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 9 / 16;
     background: #ddd;
     object-fit: cover;
 }
