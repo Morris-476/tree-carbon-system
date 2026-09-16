@@ -296,8 +296,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Approved', ...pendingEdits[id] })
             })
-                .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
-                .then(() => {
+                .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+                .then(({ ok, data }) => {
+                    // 2026/09/16：後端會檢查照片/樹徑/座標，缺件時回傳具體原因，直接顯示
+                    if (!ok) { alert(data.error || '確認失敗，請稍後再試'); return; }
                     delete pendingEdits[id];
                     trees = trees.filter((tree) => tree.id !== id);
                     renderTrees();
