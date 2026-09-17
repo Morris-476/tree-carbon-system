@@ -99,7 +99,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // 2026/09/06新增：資料上傳頁的拍攝設備下拉選單，串接 GET /api/camera-profiles
-// 資料表 Camera_Profiles 尚未建立，後端會先回傳內建清單，介面照樣可用
 document.addEventListener('DOMContentLoaded', () => {
     const select = document.getElementById('camera-profile-select');
     if (!select) return;
@@ -160,8 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let trees = [];
 
-    // 2026/09/12新增：雙擊編輯樹種／樹徑，暫存在畫面上，跟著「確認」一起送出，
-    // 不會每改一次就打一次 API。key 是 tree.id，value 是 {species?, dbh?}。
+    // 2026/09/12新增：雙擊編輯樹種／樹徑，暫存在畫面上，跟著「確認」一起送出。
     const pendingEdits = {};
 
     // 張恆輔 8/25新增：樹種清單

@@ -5,7 +5,7 @@
 import cv2
 import numpy as np
 
-# 胸高量測高度（公尺），從 mask 最底部往上算，符合林業標準 1.3m
+# 胸高量測高度（公尺），從 mask 最底部往上算
 DBH_HEIGHT_M = 1.3
 # 水平切片數量：胸高位置上下各取 10 條，共 20 條
 DBH_SLICE_COUNT = 20
@@ -19,7 +19,7 @@ class GeometryEngine:
     def compute_target_y(self, trunk_pts: np.ndarray, scale: float) -> float:
         """從 mask 最低點（可見範圍的地面基準）往上 1.3m，算出量測用的 target_y。
         影像座標系 y 軸向下為正，所以「往上」＝ y 值減小。
-        scale 或 trunk_pts 無效時回傳 -1.0，供下游函式防呆判斷。
+        scale 或 trunk_pts 無效時回傳 -1.0。
         """
         if scale <= 0:
             return -1.0
@@ -35,8 +35,7 @@ class GeometryEngine:
 
     def get_diameter_at_height(self, trunk_pts: np.ndarray, target_y: float, scale: float) -> dict:
         """在 target_y 上下各取 10 條水平切片（共 20 條），用 IQR 過濾異常寬度
-        （樹皮突起、遮擋等造成的離群值）後取平均，換算成公分直徑。
-        回傳 {diameter_cm, std_cm, confidence}，confidence 為 high/medium/low。
+        後取平均，換算成公分直徑。
         """
         if target_y < 0:
             return {'diameter_cm': 0.0, 'std_cm': 0.0, 'confidence': 'low'}

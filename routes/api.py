@@ -1,7 +1,6 @@
-"""
-routes/api.py
-一般資料 API（樹木列表、地圖資料等）。
-"""
+# 負責人：蔡宗倫、陳政雍、陳信睿、Morris
+# 開發日期：2026/08/18
+# 用途：一般資料 API（/api/upload、/api/trees、/api/stats）
 import os
 import uuid
 
@@ -14,13 +13,10 @@ import config
 api_bp = Blueprint('api', __name__)
 
 
-# 負責人：蔡宗倫
-# 開發日期：2026/08/24
-# 2026/08/29 修改：對齊完成後改為連同影片截圖一起寫入 dbo.Measurements
-# 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並寫入資料庫
 @api_bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
+    """接收管理員上傳的 RTK／Arduino／影片檔案，執行時間對齊運算並寫入資料庫。"""
     rtk_file = request.files.get('rtk_file')
     arduino_file = request.files.get('arduino_file')
     mp4_file = request.files.get('mp4_file')
@@ -43,10 +39,8 @@ def api_upload():
         video_path = os.path.join(upload_dir, mp4_file.filename)
         mp4_file.save(video_path)
 
-    # 負責人：Morris，開發日期：2026/09/12
-    # 拍攝設備焦距／感光元件寬度，來自資料上傳頁的下拉選單／手動輸入欄位
-    # （見 templates/admin/upload.html），供樹徑換算公式使用。沒有選、
-    # 或影片本身沒有偵測到樹時，樹徑算不出來，dbh 仍會維持 0。
+    # 拍攝設備焦距／感光元件寬度（見 templates/admin/upload.html），供樹徑
+    # 換算使用；未提供或影片沒偵測到樹時，dbh 仍會維持 0
     def _parse_positive_float(raw):
         try:
             value = float(raw)
@@ -82,7 +76,6 @@ def api_upload():
     }), 200
 
 
-#陳政雍 8/18 新增Map功能
 @api_bp.route('/api/trees', methods=['GET'])
 def api_get_trees():
     """地圖頁用：回傳所有 confirmed 樹木資料（含座標），供 static/js/map.js 呼叫。"""
@@ -92,7 +85,6 @@ def api_get_trees():
     return jsonify({'success': True, 'trees': tree_list})
 
 
-# 陳信睿 8/18 首頁排版
 @api_bp.route('/api/stats', methods=['GET'])
 def api_get_stats():
     """首頁用：回傳全站統計數字，供 templates/index.html 呼叫。"""

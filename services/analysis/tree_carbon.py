@@ -1,9 +1,6 @@
 # 負責人：Morris
 # 開發日期：2026/09/12
-# 用途：固碳量計算批次腳本，跟 tree_diameter.py 同一種模式——離線執行，
-#      排在樹徑換算、樹種辨識都完成之後。讀取已知樹種、已算出樹徑、但
-#      固碳量還沒算的代表紀錄，呼叫 services/core/carbon.py 的異速生長公式，
-#      把結果寫回 Measurements.biomass／carbon_absorpation。
+# 用途：固碳量計算批次腳本（離線，排在樹徑換算、樹種辨識之後），套用異速生長公式寫回固碳量
 import os
 
 if __name__ == '__main__':

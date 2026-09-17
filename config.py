@@ -26,8 +26,7 @@ UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'uploads')
 # 開發日期：2026/09/12
 SPECIES_VECTORS_PATH = os.environ.get('SPECIES_VECTORS_PATH', 'Tree-Species-Vectors/tree_vectors.pkl')
 CLIP_MODEL_NAME = os.environ.get('CLIP_MODEL_NAME', 'ViT-B/32')
-# YOLO 去背時的信心度門檻，跟訓練樹種向量時使用的門檻一致（不可跟 CONF_THRESHOLD 混用，
-# 那是追蹤流程專用的）
+# YOLO 去背時的信心度門檻，跟訓練樹種向量時使用的門檻一致
 SPECIES_SEGMENT_CONF = float(os.environ.get('SPECIES_SEGMENT_CONF', '0.3'))
-# 判定樹種的最低信心度（cosine similarity），低於此門檻視為無法判定，species_id 留空
+# 判定樹種的最低信心度，低於此門檻視為無法判定，species_id 留空
 SPECIES_CONFIDENCE_THRESHOLD = float(os.environ.get('SPECIES_CONFIDENCE_THRESHOLD', '0.6'))
