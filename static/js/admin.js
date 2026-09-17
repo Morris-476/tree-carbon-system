@@ -162,8 +162,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // 2026/09/12新增：雙擊編輯樹種／樹徑，暫存在畫面上，跟著「確認」一起送出。
     const pendingEdits = {};
 
-    // 張恆輔 8/25新增：樹種清單，「未知」為預設值
-    const speciesOptions = ['未知', '龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉'];
+    // 張恆輔 8/25新增：樹種清單
+    // justin99.lin 2026/09/17更新：新增「未辨識樹種」選項，字串需與 Species_Ref
+    // 資料表裡陳信睿已建好的同名樹種完全一致 —— _get_or_create_species() 會用這個
+    // 字串去比對既有資料，拼錯或多加字元會建出一筆參數為空的新樹種，導致固碳量算不出來
+    // justin99.lin 2026/09/17再更新：移除「未知」選項，species 尚未辨識時一律用
+    // 「未辨識樹種」表示（同上，需與 Species_Ref 完全比對），避免清單裡同時存在
+    // 兩種代表「未指定」的字串
+    const speciesOptions = ['龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉', '未辨識樹種'];
 
     const renderTrees = () => {
         tbody.innerHTML = '';
@@ -181,7 +187,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             tr.dataset.id = tree.id;
 
-            const currentSpecies = tree.species || '未知';
+            const currentSpecies = tree.species || '未辨識樹種';
             const speciesOptionsHtml = speciesOptions
                 .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
                 .join('');
