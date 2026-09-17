@@ -8,6 +8,11 @@ MIN_RECORDS = 2       # 少於此筆數標記為存疑
 GAP_SECONDS = 2       # 同一站點的 track_id 時間序列，間隔超過幾秒視為換了一部影片
 MAX_VALID_DIST = 800  # ToF 有效距離上限（cm）
 
+# 2026/09/17新增：同一棵樹相鄰兩筆距離讀值的最大合理差距（cm），超過視為
+# 「跳掉」（雷射很可能沒打到樹幹、打到背景去了）。從現有 79 棵樹、189 組
+# 相鄰讀值差距的分布反推：Q1=8、Q3=85、IQR=77，IQR 上界（Q3+1.5*IQR）≈200。
+MAX_CONSECUTIVE_JUMP_CM = 200
+
 
 def load_measurements() -> pd.DataFrame:
     """從 Measurements 讀取原始感測器讀值，含分群/代表列挑選需要的欄位。
@@ -118,6 +123,25 @@ def remove_outliers_and_mean(series):
     return round(filtered.mean(), 1)
 
 
+# 2026/09/17新增：距離讀值在樣本數很少（中位數只有3筆）時，IQR 無法有效篩掉
+# 離群值（1~3筆時四分位數本身就不穩定），所以在 IQR 之前先用時間序列上的
+# 連續性把「跳掉」的讀值切開，只留最長的連續段，避免單一次沒打到樹幹的讀值
+# 直接污染代表距離。
+def _longest_continuous_run(series: pd.Series) -> pd.Series:
+    """series 須已依時間排序。相鄰讀值差距超過 MAX_CONSECUTIVE_JUMP_CM 視為
+    斷點，回傳斷點切出來最長的一段；少於 2 筆讀值時無從判斷連續性，原樣回傳。"""
+    values = series.to_numpy()
+    if len(values) < 2:
+        return series
+
+    diffs = np.abs(np.diff(values))
+    breaks = np.where(diffs > MAX_CONSECUTIVE_JUMP_CM)[0] + 1
+    starts = np.concatenate(([0], breaks))
+    ends = np.concatenate((breaks, [len(values)]))
+    best = np.argmax(ends - starts)
+    return series.iloc[starts[best]:ends[best]]
+
+
 # 2026/09/16：代表列改成「群內有截圖、且量到樹幹寬度最大」的那一秒（拍得最
 # 清楚），群內沒有符合的才退回時間中位數；同時把距離、樹幹寬度改成整群
 # IQR平均，GPS/方位角則用群內所有有效秒數平均，不再只看代表列自己那一秒
@@ -131,6 +155,15 @@ def _summarize_group(g: pd.DataFrame) -> pd.Series:
 
     gps = g[['latitude', 'longitude', 'HEADING']].dropna()
 
+    # 2026/09/17修正：平均距離原本用整組所有幀計算，平均像素寬度卻只用
+    # 「有量到寬度」的幀計算，兩者取樣範圍可能不一致（例如樹幹只在近距離
+    # 那幾秒被偵測到，但遠距離沒偵測到的幀還是被算進距離平均），導致樹徑
+    # 換算公式拿到「對不到同一段拍攝時刻」的距離與像素寬度。改成優先只用
+    # 「同時有量到寬度」的幀算距離平均，跟像素寬度取同一批樣本。
+    g_with_width = g[g['pixel_width'].notna()]
+    dist_source = g_with_width['ToF_Dist1_cm'] if len(g_with_width) > 0 else g['ToF_Dist1_cm']
+    dist_source = _longest_continuous_run(dist_source)
+
     return pd.Series({
         'record_id': record_id,
         '站點': g['site_name'].iloc[0],
@@ -139,7 +172,7 @@ def _summarize_group(g: pd.DataFrame) -> pd.Series:
         '開始時間': g['DATETIME'].iloc[0],
         '結束時間': g['DATETIME'].iloc[-1],
         '筆數': g['ToF_Dist1_cm'].count(),
-        '平均距離_cm': remove_outliers_and_mean(g['ToF_Dist1_cm']),
+        '平均距離_cm': remove_outliers_and_mean(dist_source),
         '最小距離_cm': g['ToF_Dist1_cm'].min(),
         '最大距離_cm': g['ToF_Dist1_cm'].max(),
         '原始距離列表': list(g['ToF_Dist1_cm']),

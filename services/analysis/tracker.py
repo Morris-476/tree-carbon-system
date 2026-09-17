@@ -159,5 +159,13 @@ class TreeTracker:
         if len(row_xs) == 0:
             return None, mask_width
 
-        x_start, x_end = int(row_xs.min()), int(row_xs.max())
+        # 2026/09/17修正：原本直接取該行最左右 x，遇到遮罩機率圖在主體以外
+        # 冒出零星雜訊像素（低解析度 mask 常見）就會把寬度誤判成跨到雜訊點，
+        # 量出遠超實際樹幹的寬度。改成只取「連續」的一段（像素間距=1 才算
+        # 同一段），取像素數最多的一段當作樹幹本體，孤立雜訊點不會被選中。
+        row_xs = np.sort(row_xs)
+        gaps = np.where(np.diff(row_xs) > 1)[0]
+        main_run = max(np.split(row_xs, gaps + 1), key=len)
+
+        x_start, x_end = int(main_run[0]), int(main_run[-1])
         return x_end - x_start, mask_width
