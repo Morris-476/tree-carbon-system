@@ -1,9 +1,6 @@
 # 負責人：Morris
 # 開發日期：2026/09/12
-# 用途：樹徑換算批次腳本，跟 tree_coordinate.py／tree_species.py 同一種模式——
-#      離線執行，不是 /api/upload 即時流程的一部分。讀取已經有代表距離
-#      （Final_Dist_cm）、但樹徑（dbh）還沒算出來的代表紀錄，呼叫
-#      services/core/diameter.py 的針孔成像公式，把結果寫回 Measurements.dbh。
+# 用途：樹徑換算批次腳本（離線），用針孔成像公式將像素寬度換算成 dbh 寫回 Measurements
 import os
 
 if __name__ == '__main__':

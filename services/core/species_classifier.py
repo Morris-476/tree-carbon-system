@@ -1,10 +1,7 @@
 # 負責人：Morris
 # 開發日期：2026/09/12
-# 用途：樹種辨識共用模組（YOLO 去背 + CLIP 抽向量 + 比對 Tree-Species-Vectors/tree_vectors.pkl）。
-#      邏輯完全比照訓練 tree_vectors.pkl 當下使用的 Colab 筆記本，前處理方式刻意不與
-#      services/measure/trunk_detector.py、services/analysis/tracker.py 共用，因為
-#      選遮罩的標準（面積最大 vs 信心度最高）、conf 門檻都跟追蹤/量測流程不一樣，
-#      混用會讓算出來的向量偏離訓練時的向量，比對失準。
+# 用途：樹種辨識共用模組（YOLO 去背＋CLIP 向量＋比對 tree_vectors.pkl）。
+#      ⚠️ 前處理不可與 tracker.py／trunk_detector.py 共用，混用會讓向量偏離訓練基準
 from __future__ import annotations
 
 import os

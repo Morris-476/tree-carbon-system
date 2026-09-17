@@ -1,7 +1,6 @@
 # 負責人：蔡宗倫
 # 開發日期：2026/08/16
-# 2026/08/24 修改：改為純運算邏輯（不寫入資料庫、不輸出檔案），供 /api/upload 上傳流程呼叫
-# 用意：對齊 Arduino(ToF) 與 RTK 的 CSV 數據，並推算影片起始時間，回傳合併後的資料
+# 用途：對齊 Arduino(ToF) 與 RTK 的 CSV 數據並推算影片起始時間，供 /api/upload 呼叫
 
 import os
 from datetime import datetime
