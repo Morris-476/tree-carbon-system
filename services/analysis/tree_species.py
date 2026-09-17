@@ -4,7 +4,7 @@
 #      /api/upload 即時流程的一部分。讀取還沒判定樹種、但有截圖可用的樹，
 #      跑 YOLO 去背 + CLIP 比對（services/species_classifier.py），把結果
 #      寫回 Trees.species_id。信心度不足時跳過，species_id 維持 NULL，
-#      後台畫面會照既有邏輯自動顯示「未知」，不需要另外處理。
+#      後台畫面會照既有邏輯自動顯示「未辨識樹種」，不需要另外處理。
 #
 # 建議執行順序：先跑 tree_analysis.py、tree_coordinate.py 把 Tree_ID 對好，
 # 再跑這支——這支只處理「已經有正確 Tree_ID」的樹，Tree_ID 還沒接上的
