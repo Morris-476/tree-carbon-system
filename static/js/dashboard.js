@@ -56,10 +56,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const buildRow = (tree) => {
         const tr = document.createElement('tr');
 
-        const idCell = document.createElement('td');
-        idCell.textContent = formatValue(tree.record_id);
-        tr.appendChild(idCell);
-
         const treeIdCell = document.createElement('td');
         treeIdCell.textContent = formatValue(tree.tree_id);
         tr.appendChild(treeIdCell);

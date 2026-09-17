@@ -131,6 +131,14 @@ def _summarize_group(g: pd.DataFrame) -> pd.Series:
 
     gps = g[['latitude', 'longitude', 'HEADING']].dropna()
 
+    # 2026/09/17修正：平均距離原本用整組所有幀計算，平均像素寬度卻只用
+    # 「有量到寬度」的幀計算，兩者取樣範圍可能不一致（例如樹幹只在近距離
+    # 那幾秒被偵測到，但遠距離沒偵測到的幀還是被算進距離平均），導致樹徑
+    # 換算公式拿到「對不到同一段拍攝時刻」的距離與像素寬度。改成優先只用
+    # 「同時有量到寬度」的幀算距離平均，跟像素寬度取同一批樣本。
+    g_with_width = g[g['pixel_width'].notna()]
+    dist_source = g_with_width['ToF_Dist1_cm'] if len(g_with_width) > 0 else g['ToF_Dist1_cm']
+
     return pd.Series({
         'record_id': record_id,
         '站點': g['site_name'].iloc[0],
@@ -139,7 +147,7 @@ def _summarize_group(g: pd.DataFrame) -> pd.Series:
         '開始時間': g['DATETIME'].iloc[0],
         '結束時間': g['DATETIME'].iloc[-1],
         '筆數': g['ToF_Dist1_cm'].count(),
-        '平均距離_cm': remove_outliers_and_mean(g['ToF_Dist1_cm']),
+        '平均距離_cm': remove_outliers_and_mean(dist_source),
         '最小距離_cm': g['ToF_Dist1_cm'].min(),
         '最大距離_cm': g['ToF_Dist1_cm'].max(),
         '原始距離列表': list(g['ToF_Dist1_cm']),
