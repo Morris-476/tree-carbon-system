@@ -2,6 +2,7 @@
 # 用途：/measure 頁面的主流程，串接樹幹偵測→樹徑量測→固碳計算→結果包裝→標註圖繪製
 
 import datetime
+from typing import Optional
 
 import numpy as np
 
@@ -33,6 +34,7 @@ def run_measure_pipeline(
     sensor_width_mm: float,
     distance_m: float,
     species_data: dict,
+    tree_age: Optional[int] = None,
     image_file: str = '',
 ) -> tuple[MeasurementResult, np.ndarray]:
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -72,6 +74,7 @@ def run_measure_pipeline(
     result.measurement_y = target_y
     result.image_file = image_file
     result.timestamp = now
+    result.tree_age = tree_age
 
     carbon_result = calculate_carbon(
         dbh=result.diameter_cm,
@@ -84,6 +87,10 @@ def run_measure_pipeline(
         result.biomass_kg = carbon_result.biomass_kg
         result.carbon_kg = carbon_result.carbon_kg
         result.co2_kg = carbon_result.co2_kg
+        # 本年度固碳量 = 固碳量CO2當量 ÷ 樹齡（樹齡為選填，沒填就維持 None，
+        # 前端會整塊不顯示）。固碳量本身算失敗時也不算，避免除到無意義的 0
+        if tree_age is not None and tree_age > 0:
+            result.annual_co2_kg = result.co2_kg / tree_age
     else:
         result.warnings.append(carbon_result.error)
 
