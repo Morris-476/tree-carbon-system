@@ -808,6 +808,16 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
                 missing.append('座標')
             if m_track_id is None or t_tracker_id != m_track_id:
                 missing.append('Tree_ID 對應關係尚未確認')
+            if current_tree_id is not None:
+                cursor.execute('''
+                    SELECT s.allo_param_a, s.allo_param_b, s.carbon_fraction
+                    FROM Trees t
+                    JOIN Species_Ref s ON s.species_id = t.species_id
+                    WHERE t.Tree_ID = ?
+                ''', current_tree_id)
+                species_row = cursor.fetchone()
+                if species_row is None or any(v is None for v in species_row):
+                    missing.append('樹種固碳參數')
             if missing:
                 conn.commit()
                 return False, f"資料不完整（缺少：{'、'.join(missing)}），無法核准"
