@@ -302,6 +302,18 @@ function renderSuccessCard(result, index) {
   const warningsHtml = result.warnings.length
     ? `<div class="detail-item"><span>警告</span><strong class="warning-text">${escapeHtml(result.warnings.join("；"))}</strong></div>`
     : "";
+  // 使用者沒填樹齡時後端回 null，整塊「本年度固碳量」就不輸出；
+  // 用 != null 同時擋掉 null 與 undefined，又不會把 0 誤判成沒有值
+  const annualCarbonHtml =
+    result.annualCarbonKgCo2 != null
+      ? `<div class="detail-item carbon-highlight">
+            <div class="carbon-copy">
+              <span>本年度固碳量</span>
+              <strong class="carbon-unit">kg CO₂</strong>
+            </div>
+            <strong class="carbon-value carbon-value-annual">${result.annualCarbonKgCo2.toFixed(1)}</strong>
+          </div>`
+      : "";
 
   return `
     <article class="result-card">
@@ -316,15 +328,9 @@ function renderSuccessCard(result, index) {
               <span>總固碳量</span>
               <strong class="carbon-unit">kg CO₂</strong>
             </div>
-            <strong class="carbon-value">${result.carbonKgCo2}</strong>
+            <strong class="carbon-value">${result.carbonKgCo2.toFixed(1)}</strong>
           </div>
-          <div class="detail-item carbon-highlight">
-            <div class="carbon-copy">
-              <span>本年度固碳量</span>
-              <strong class="carbon-unit">kg CO₂</strong>
-            </div>
-            <strong class="carbon-value carbon-value-annual">${result.annualCarbonKgCo2}</strong>
-          </div>
+          ${annualCarbonHtml}
           <div class="detail-item species-highlight">
             <span>樹種</span>
             <strong>${escapeHtml(result.species)}</strong>

@@ -28,6 +28,12 @@ class MeasurementResult:
     carbon_kg: float = 0.0
     co2_kg: float = 0.0
 
+    # 樹齡（選填）與本年度固碳量：tree_age 為 None 代表使用者沒填樹齡，
+    # 此時 annual_co2_kg 也一律維持 None（不是 0.0），讓呼叫端能分辨
+    # 「沒填樹齡所以算不出來」和「算出來剛好是 0」
+    tree_age: Optional[int] = None
+    annual_co2_kg: Optional[float] = None
+
     # 紀錄
     timestamp: str = ''
     image_file: str = ''
