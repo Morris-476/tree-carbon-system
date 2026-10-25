@@ -3,6 +3,7 @@ routes/admin.py
 後台管理路由：登入／登出、樹木審核（confirm/delete）。
 
 """
+from services.blob_service import upload_tree_image
 from functools import wraps
 from flask import (Blueprint, session, request, jsonify,
                    redirect, url_for, render_template)
@@ -137,3 +138,43 @@ def api_delete_tree(tree_id: int):
     if not db_service.delete_tree(tree_id):
         return jsonify({'error': '刪除失敗，查無此筆資料'}), 400
     return jsonify({'success': True}), 200
+
+# ── API：上傳樹木照片至 Blob 並建立紀錄 ────────────────────────────
+# 陳信睿 10/25新增
+@admin_bp.route('/api/admin/upload-tree', methods=['POST'])
+@login_required  # 套用既有的登入保護
+def api_upload_tree():
+    """
+    前端傳送 multipart/form-data 表單資料：
+    包含：site_name (案場名稱, 可選)、image (照片檔案)
+    """
+    # ① 取得前端文字欄位（案場名稱）
+    site_name = request.form.get('site_name', '未指定案場')
+    
+    # ② 取得前端上傳的圖片檔案物件
+    image_file = request.files.get('image')
+
+    image_url = None
+    if image_file:
+        # ③ 呼叫步驟五寫好的模組：把圖片流丟給 Azure Blob，換取公開 HTTPS 網址
+        image_url = upload_tree_image(
+            file_stream=image_file.stream,
+            original_filename=image_file.filename,
+            content_type=image_file.mimetype or "image/jpeg"
+        )
+
+    # ④ 連線至 Azure SQL，將 image_url 寫入 Measurements 資料表
+    conn = pyodbc.connect(config.DB_CONNECTION_STRING)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO Measurements (site_name, image_url, status)
+        VALUES (?, ?, 'Pending')
+    """, (site_name, image_url))
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        'success': True,
+        'message': '照片上傳成功並已存入資料庫！',
+        'image_url': image_url
+    }), 200

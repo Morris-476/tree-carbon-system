@@ -1,4 +1,7 @@
-//陳政雍 8/18新增Map功能
+// static/js/map.js
+// 負責人：陳政雍、陳信睿
+// 用途：地圖初始化、讀取樹木資料並在 Leaflet 地圖彈出樹木卡片資訊 (整合 Azure Blob Storage)
+
 document.addEventListener('DOMContentLoaded', () => {
     const mapEl = document.getElementById('treeMap');
     if (!mapEl) return;
@@ -30,21 +33,37 @@ document.addEventListener('DOMContentLoaded', () => {
         const card = document.createElement('div');
         card.className = 'tree-info-card';
 
+        // 標題：樹種名稱
         const title = document.createElement('h3');
         title.className = 'tree-info-card-title';
         title.textContent = formatValue(tree.species_name);
         card.appendChild(title);
 
+        // 圖片外框：優先載入 Azure Blob 的 image_url 或 tree.img
         const imageBox = document.createElement('div');
         imageBox.className = 'tree-info-card-image';
-        if (tree.img) {
+        const imgUrl = tree.image_url || tree.img;
+
+        if (imgUrl) {
             const img = document.createElement('img');
-            img.src = tree.img;
-            img.alt = tree.species_name || '';
+            img.src = imgUrl;
+            img.alt = tree.species_name || '樹木照片';
+            // 🎯 若 Blob 圖片載入失敗，自動替換為預設防呆圖片
+            img.onerror = () => {
+                img.onerror = null;
+                img.src = '/static/img/no-image.png';
+            };
             imageBox.appendChild(img);
+        } else {
+            const noImgText = document.createElement('span');
+            noImgText.textContent = '暫無照片';
+            noImgText.style.color = '#777';
+            noImgText.style.fontSize = '0.85rem';
+            imageBox.appendChild(noImgText);
         }
         card.appendChild(imageBox);
 
+        // 樹木詳細資訊
         const info = document.createElement('div');
         info.className = 'tree-info-card-info';
 
@@ -52,9 +71,20 @@ document.addEventListener('DOMContentLoaded', () => {
             ? '尚無資料'
             : `${tree.latitude}, ${tree.longitude}`;
 
+        const carbonText = !isEmpty(tree.carbon_absorpation)
+            ? `${tree.carbon_absorpation} kg`
+            : '尚無資料';
+
+        const dbhText = !isEmpty(tree.dbh)
+            ? `${tree.dbh} cm`
+            : '尚無資料';
+
+        // 欄位清單（加入案場、胸徑與固碳量）
         const rows = [
+            ['巡檢案場：', formatValue(tree.site_name)],
             ['樹種名：', formatValue(tree.species_name)],
-            ['樹木固碳量：', formatValue(tree.carbon_absorpation)],
+            ['樹木胸徑：', dbhText],
+            ['樹木固碳量：', carbonText],
             ['經緯度：', coordText]
         ];
 
@@ -73,6 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         card.appendChild(info);
 
+        // 關閉按鈕
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'tree-info-card-close';
