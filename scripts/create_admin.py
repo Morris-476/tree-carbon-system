@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from werkzeug.security import generate_password_hash
-from services.db import get_user_by_username, create_admin_user
+from services.core.db import get_user_by_username, create_admin_user
 
 
 # 陳政雍 8/1修改

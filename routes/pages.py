@@ -18,3 +18,9 @@ def index():
 @pages_bp.route('/map')
 def map_page():
     return render_template('map.html')
+
+
+# 張恆輔 9/4新增：簡易固碳繪測頁（前端複製自 Tree-Trunk-Measurement，功能未變）
+@pages_bp.route('/measure')
+def measure():
+    return render_template('measure.html')

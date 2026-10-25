@@ -1,25 +1,22 @@
-"""
-routes/api.py
-一般資料 API（樹木列表、地圖資料等）。
-"""
+# 負責人：蔡宗倫、陳政雍、陳信睿、Morris
+# 開發日期：2026/08/18
+# 用途：一般資料 API（/api/upload、/api/trees、/api/stats）
 import os
 import uuid
 
 from flask import Blueprint, request, jsonify
-from services import db as db_service
+from services.core import db as db_service
 from routes.admin import login_required
-from services import data_pipeline
+from services.core import data_pipeline
 import config
 
 api_bp = Blueprint('api', __name__)
 
 
-# 負責人：蔡宗倫
-# 開發日期：2026/08/24
-# 用意：接收管理員上傳的 RTK / Arduino / 影片檔案，執行時間對齊運算並回傳結果
 @api_bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
+    """接收管理員上傳的 RTK／Arduino／影片檔案，執行時間對齊運算並寫入資料庫。"""
     rtk_file = request.files.get('rtk_file')
     arduino_file = request.files.get('arduino_file')
     mp4_file = request.files.get('mp4_file')
@@ -42,32 +39,43 @@ def api_upload():
         video_path = os.path.join(upload_dir, mp4_file.filename)
         mp4_file.save(video_path)
 
-    result = data_pipeline.run_sensor_time_sync(
+    # 拍攝設備焦距／感光元件寬度（見 templates/admin/upload.html），供樹徑
+    # 換算使用；未提供或影片沒偵測到樹時，dbh 仍會維持 0
+    def _parse_positive_float(raw):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    focal_mm = _parse_positive_float(request.form.get('focal_mm'))
+    sensor_width_mm = _parse_positive_float(request.form.get('sensor_width'))
+
+    result = data_pipeline.run_upload_and_save(
         rtk_file_path=rtk_path,
         csv_file_path=arduino_path,
         video_path=video_path,
+        focal_mm=focal_mm,
+        sensor_width_mm=sensor_width_mm,
     )
 
     if result['status'] != 'success':
         return jsonify({'error': result['message']}), 400
 
-    records = [
-        {**r, 'recorded_at': r['recorded_at'].strftime('%Y-%m-%d %H:%M:%S')}
-        for r in result['records']
-    ]
     video_start_at = result['video_start_at']
 
     return jsonify({
         'success': True,
         'total_count': result['total_count'],
         'matched_gps_count': result['matched_gps_count'],
+        'inserted': result['inserted'],
+        'tree_id': result['tree_id'],
+        'site_name': result['site_name'],
         'video_start_at': video_start_at.strftime('%Y-%m-%d %H:%M:%S') if video_start_at else None,
         'video_filename': result['video_filename'],
-        'records': records,
     }), 200
 
 
-#陳政雍 8/18 新增Map功能
 @api_bp.route('/api/trees', methods=['GET'])
 def api_get_trees():
     """地圖頁用：回傳所有 confirmed 樹木資料（含座標），供 static/js/map.js 呼叫。"""
@@ -77,7 +85,6 @@ def api_get_trees():
     return jsonify({'success': True, 'trees': tree_list})
 
 
-# 陳信睿 8/18 首頁排版
 @api_bp.route('/api/stats', methods=['GET'])
 def api_get_stats():
     """首頁用：回傳全站統計數字，供 templates/index.html 呼叫。"""

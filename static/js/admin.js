@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json().catch(() => ({}));
 
         if (res.ok) {
-            alert(`時間對齊完成，共 ${data.total_count} 筆，其中 ${data.matched_gps_count} 筆配對到 GPS 座標`);
+            alert(`時間對齊完成，共 ${data.total_count} 筆，其中 ${data.matched_gps_count} 筆配對到 GPS 座標，已寫入 ${data.inserted} 筆量測資料（案場：${data.site_name || '未提供影片'}）`);
             form.reset();
             resetFilePills();
         } else {
@@ -96,6 +96,52 @@ document.addEventListener('DOMContentLoaded', () => {
             errorEl.hidden = false;
         }
     });
+});
+
+// 2026/09/06新增：資料上傳頁的拍攝設備下拉選單，串接 GET /api/camera-profiles
+document.addEventListener('DOMContentLoaded', () => {
+    const select = document.getElementById('camera-profile-select');
+    if (!select) return;
+
+    const manualFields = document.getElementById('camera-manual-fields');
+    const focalInput = document.getElementById('camera-focal-input');
+    const sensorWidthInput = document.getElementById('camera-sensor-width-input');
+
+    const applySelection = () => {
+        const isOther = select.value === '其他';
+        manualFields.hidden = !isOther;
+        focalInput.required = isOther;
+        sensorWidthInput.required = isOther;
+
+        if (isOther) {
+            focalInput.value = '';
+            sensorWidthInput.value = '';
+            return;
+        }
+
+        // 選了預設機型：把該選項存的 focal_mm/sensor_width 帶進隱藏欄位一起送出，
+        // 「其他」以外都不用使用者自己填數字
+        const selectedOption = select.options[select.selectedIndex];
+        focalInput.value = selectedOption.dataset.focalMm || '';
+        sensorWidthInput.value = selectedOption.dataset.sensorWidth || '';
+    };
+
+    select.addEventListener('change', applySelection);
+    applySelection();
+
+    fetch('/api/camera-profiles')
+        .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
+        .then((profiles) => {
+            profiles.forEach((profile) => {
+                const opt = document.createElement('option');
+                opt.value = profile.name;
+                opt.textContent = profile.name;
+                opt.dataset.focalMm = profile.focal_mm;
+                opt.dataset.sensorWidth = profile.sensor_width;
+                select.insertBefore(opt, select.querySelector('option[value="其他"]'));
+            });
+        })
+        .catch((err) => console.error('拍攝設備清單載入失敗', err));
 });
 
 // 張恆輔 8/25新增：數據管理維護頁（待審核資料表格 + 辨識結果圖彈窗）
@@ -113,8 +159,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let trees = [];
 
-    // 張恆輔 8/25新增：樹種清單，「未知」為預設值（species 尚未辨識時顯示）
-    const speciesOptions = ['未知', '龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉'];
+    // 2026/09/12新增：雙擊編輯樹種／樹徑，暫存在畫面上，跟著「確認」一起送出。
+    const pendingEdits = {};
+
+    // 張恆輔 8/25新增：樹種清單
+    // justin99.lin 2026/09/17更新：新增「未辨識樹種」選項，字串需與 Species_Ref
+    // 資料表裡陳信睿已建好的同名樹種完全一致 —— _get_or_create_species() 會用這個
+    // 字串去比對既有資料，拼錯或多加字元會建出一筆參數為空的新樹種，導致固碳量算不出來
+    // justin99.lin 2026/09/17再更新：移除「未知」選項，species 尚未辨識時一律用
+    // 「未辨識樹種」表示（同上，需與 Species_Ref 完全比對），避免清單裡同時存在
+    // 兩種代表「未指定」的字串
+    const speciesOptions = ['龍柏', '樟樹', '鳳凰木', '榕樹', '黑板樹', '茄苳', '美人樹', '小葉南洋杉', '未辨識樹種'];
 
     const renderTrees = () => {
         tbody.innerHTML = '';
@@ -132,7 +187,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             tr.dataset.id = tree.id;
 
-            const currentSpecies = tree.species || '未知';
+            const currentSpecies = tree.species || '未辨識樹種';
             const speciesOptionsHtml = speciesOptions
                 .map((name) => `<option value="${name}"${name === currentSpecies ? ' selected' : ''}>${name}</option>`)
                 .join('');
@@ -140,7 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
             tr.innerHTML = `
                 <td>${tree.tree_id}</td>
                 <td><select class="species-select">${speciesOptionsHtml}</select></td>
-                <td>${tree.dbh}</td>
+                <td class="editable-cell" data-field="dbh">${tree.dbh}</td>
                 <td>${tree.carbon}</td>
                 <td>${tree.lat}, ${tree.lng}</td>
                 <td>${tree.site}</td>
@@ -178,6 +233,50 @@ document.addEventListener('DOMContentLoaded', () => {
         modal.hidden = false;
     };
 
+    // 2026/09/12新增：雙擊樹徑儲存格，換成輸入框讓管理員修改。
+    // 失焦或按 Enter 時把新值存進 pendingEdits，畫面文字跟著換成新值，
+    // 但還不會打 API——要等按下「確認」才會真的送出。
+    tbody.addEventListener('dblclick', (event) => {
+        const cell = event.target.closest('.editable-cell[data-field="dbh"]');
+        if (!cell || cell.querySelector('input')) return;
+
+        const row = cell.closest('tr');
+        const id = Number(row.dataset.id);
+        const originalValue = cell.textContent.trim();
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = '0.01';
+        input.className = 'cell-input';
+        input.value = originalValue;
+
+        const finishEdit = () => {
+            const newValue = input.value.trim();
+            cell.textContent = newValue;
+            if (newValue !== '' && Number(newValue) !== Number(originalValue)) {
+                pendingEdits[id] = { ...pendingEdits[id], dbh: Number(newValue) };
+            }
+        };
+
+        input.addEventListener('blur', finishEdit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') input.blur();
+        });
+
+        cell.textContent = '';
+        cell.appendChild(input);
+        input.focus();
+        input.select();
+    });
+
+    // 2026/09/12新增：樹種下拉選單改變時，先暫存，跟樹徑一樣等「確認」才送出
+    tbody.addEventListener('change', (event) => {
+        if (!event.target.classList.contains('species-select')) return;
+        const row = event.target.closest('tr');
+        const id = Number(row.dataset.id);
+        pendingEdits[id] = { ...pendingEdits[id], species: event.target.value };
+    });
+
     tbody.addEventListener('click', (event) => {
         const target = event.target;
         const row = target.closest('tr');
@@ -191,14 +290,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // 負責人：陳政雍 8/27 串接確認／刪除 API
+        // 2026/09/12修改：把 pendingEdits 裡暫存的樹種／樹徑修改一起送出，
+        // 後端會用最新的樹徑＋樹種重新算一次固碳量。
         if (target.dataset.action === 'confirm') {
             fetch(`/api/admin/trees/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'Approved' })
+                body: JSON.stringify({ status: 'Approved', ...pendingEdits[id] })
             })
-                .then((res) => { if (!res.ok) throw new Error('請求失敗'); return res.json(); })
-                .then(() => { trees = trees.filter((tree) => tree.id !== id); renderTrees(); })
+                .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+                .then(({ ok, data }) => {
+                    // 2026/09/16：後端會檢查照片/樹徑/座標，缺件時回傳具體原因，直接顯示
+                    if (!ok) { alert(data.error || '確認失敗，請稍後再試'); return; }
+                    delete pendingEdits[id];
+                    trees = trees.filter((tree) => tree.id !== id);
+                    renderTrees();
+                })
                 .catch((err) => { console.error(err); alert('確認失敗，請稍後再試'); });
             return;
         }
