@@ -169,15 +169,13 @@ def api_upload_tree():
             content_type=image_file.mimetype or "image/jpeg"
         )
 
-    # ④ 連線至 Azure SQL，將 image_url 寫入 Measurements 資料表
-    conn = pyodbc.connect(config.DB_CONNECTION_STRING)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO Measurements (site_name, image_url, status)
-        VALUES (?, ?, 'Pending')
-    """, (site_name, image_url))
-    conn.commit()
-    conn.close()
+    # ④ 寫入 Measurements 資料表（2026/10/29修正：原本在這裡自己開 pyodbc
+    # 連線，缺少 import pyodbc/config 會直接 NameError，而且沒給 dbh／
+    # biomass／carbon_absorpation 這三個 NOT NULL 欄位值也會寫入失敗。
+    # 改呼叫 services/core/db.py 的 save_manual_tree_photo()，兩個問題一起解決，
+    # 也符合 db.py 開頭講的「routes/ 一律不可直接查資料庫」）
+    if not db_service.save_manual_tree_photo(site_name, image_url):
+        return jsonify({'error': '寫入資料庫失敗'}), 500
 
     return jsonify({
         'success': True,

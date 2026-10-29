@@ -113,24 +113,27 @@ def get_tree_map_data():
         return [], 'disconnected'
     try:
         cursor = conn.cursor()
+        # 2026/10/29修正：v_TreeCompleteData 在 Blob Storage 串接時被改成英文欄位、
+        # 圖片改回傳 image_url（網址字串，不再是二進位），原本查中文別名的寫法
+        # 會直接噴 Invalid column name，這裡跟著 view 現在的實際欄位名稱改。
         cursor.execute('''
             SELECT
-                紀錄編號           AS record_id,
-                Tree_ID            AS tree_id,
-                樹木種類           AS species_name,
-                樹徑cm             AS dbh,
-                固碳量             AS carbon_absorpation,
-                緯度               AS latitude,
-                經度               AS longitude,
-                巡檢案場           AS site_name,
-                樹木照片二進位     AS image_data
+                record_id,
+                tracker_id AS tree_id,
+                species_name,
+                dbh,
+                carbon_absorpation,
+                latitude,
+                longitude,
+                site_name,
+                image_url
             FROM v_TreeCompleteData
         ''')
         columns = [col[0] for col in cursor.description]
         rows = cursor.fetchall()
         tree_list = [dict(zip(columns, row)) for row in rows]
         for tree in tree_list:
-            tree['img'] = _img_bin_to_data_uri(tree.pop('image_data', None))
+            tree['img'] = tree.pop('image_url', None)
             # 資料庫存的是帶方向字母的字串（如 '25.0883747N'），Leaflet 需要
             # 純數字，不轉換的話座標會變成 NaN，地圖標記顯示不出來
             tree['latitude'] = _parse_coord(tree['latitude'])
@@ -294,6 +297,8 @@ def _ensure_measurement_columns(cursor):
         'video_offset_ms': 'INT NULL',
         'site_name': 'VARCHAR(255) NULL',
         'image_data': 'VARBINARY(MAX) NULL',
+        # 2026/10/29新增：照片改存 Azure Blob Storage，這裡只存公開網址
+        'image_url': 'NVARCHAR(500) NULL',
         # 同一支影片內的追蹤結果，供之後 IQR 篩選＋樹徑換算使用
         'track_id': 'INT NULL',
         'pixel_width': 'INT NULL',
@@ -458,9 +463,12 @@ def link_measurement_to_tree(site_name, video_seq, track_id, tree_id) -> None:
 
 
 def get_trees_needing_species() -> list:
-    """回傳 [{'tree_id': int, 'image_data': bytes}, ...]：species_id 還是
-    NULL、且找得到截圖的樹，一棵樹只回傳一筆代表截圖（優先取有 Final_Dist_cm
-    的代表紀錄，跟 tree_coordinate.py 用同一筆，沒有才退回任一筆有截圖的紀錄）。
+    """回傳 [{'tree_id': int, 'image_data': bytes|None, 'image_url': str|None}, ...]：
+    species_id 還是 NULL、且找得到截圖（二進位或 Blob 網址皆可）的樹，一棵樹只回傳
+    一筆代表截圖（優先取有 Final_Dist_cm 的代表紀錄，跟 tree_coordinate.py 用同一筆，
+    沒有才退回任一筆有截圖的紀錄）。
+    2026/10/29修正：截圖改存 Blob 後，新資料 image_data 會是 NULL、改存 image_url，
+    原本只認 image_data 的篩選條件會讓新資料完全抓不到，這裡一併認 image_url。
     """
     conn = get_db_connection()
     if conn is None:
@@ -468,17 +476,19 @@ def get_trees_needing_species() -> list:
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT Tree_ID, image_data FROM (
+            SELECT Tree_ID, image_data, image_url FROM (
                 SELECT
                     t.Tree_ID,
                     m.image_data,
+                    m.image_url,
                     ROW_NUMBER() OVER (
                         PARTITION BY t.Tree_ID
                         ORDER BY CASE WHEN m.Final_Dist_cm IS NOT NULL THEN 0 ELSE 1 END, m.record_id
                     ) AS rn
                 FROM Trees t
                 JOIN Measurements m ON m.Tree_ID = t.Tree_ID
-                WHERE t.species_id IS NULL AND m.image_data IS NOT NULL
+                WHERE t.species_id IS NULL
+                  AND (m.image_data IS NOT NULL OR m.image_url IS NOT NULL)
             ) ranked
             WHERE rn = 1
         ''')
@@ -620,16 +630,17 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
                 'Tree_ID, dbh, biomass, carbon_absorpation, status, [DATE], [TIME], '
                 'latitude, longitude, SPEED, HEADING, TAG, HEIGHT, '
                 'Laser_Status, LED_Status, ToF_Dist1_cm, ToF_Dist2_cm, '
-                'gnss_gap_ms, video_offset_ms, site_name, image_data, '
+                'gnss_gap_ms, video_offset_ms, site_name, image_data, image_url, '
                 'track_id, pixel_width, mask_width, focal_mm, sensor_width_mm'
-                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 None, 0, 0, 0, 'Pending',
                 recorded_at.strftime('%Y/%m/%d'), recorded_at.strftime('%H:%M:%S'),
                 r['latitude'], r['longitude'], r['rtk_speed_mps'], r['rtk_heading_deg'],
                 r['rtk_tag'], r['rtk_height_m'],
                 r['laser_status'], r['led_status'],
                 int(r['tof_dist1_cm']), int(r['tof_dist2_cm']),
-                r['gnss_gap_ms'], r['video_offset_ms'], site_name, r.get('image_data'),
+                r['gnss_gap_ms'], r['video_offset_ms'], site_name,
+                r.get('image_data'), r.get('image_url'),
                 r.get('track_id'), r.get('pixel_width'), r.get('mask_width'),
                 r.get('focal_mm'), r.get('sensor_width_mm'),
             )
@@ -638,6 +649,34 @@ def save_time_synced_measurements(records: list, site_name) -> dict:
     except Exception as e:
         conn.rollback()
         return {'status': 'error', 'message': f'寫入 Measurements 失敗：{str(e)}'}
+    finally:
+        conn.close()
+
+
+# 2026/10/29新增：/api/admin/upload-tree 用，後台手動上傳單張照片時建立一筆
+# 最簡易的待審紀錄。dbh／biomass／carbon_absorpation 在 Measurements 都是
+# NOT NULL、沒有預設值，原本 routes/admin.py 裡那段只 INSERT site_name/
+# image_url/status 三欄的寫法會直接違反 NOT NULL 限制，這裡補齊成 0，
+# 跟 save_time_synced_measurements() 的「尚未計算先佔位」慣例一致，
+# 等管理員之後在後台補樹徑／樹種，走 admin_update_measurement() 才會算出真正數值。
+def save_manual_tree_photo(site_name: str, image_url: "str | None") -> bool:
+    """後台手動上傳照片：建立一筆 status='Pending' 的最簡易紀錄。"""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO Measurements (dbh, biomass, carbon_absorpation, status, site_name, image_url) '
+            "VALUES (0, 0, 0, 'Pending', ?, ?)",
+            site_name, image_url
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f'save_manual_tree_photo 寫入失敗: {e}')
+        conn.rollback()
+        return False
     finally:
         conn.close()
 
@@ -711,17 +750,21 @@ def get_all_trees_admin():
         return []
     try:
         cursor = conn.cursor()
+        # 2026/10/29修正：v_AdminPendingQueue 在 Blob Storage 串接時被改寫過，
+        # 欄位名稱整組換掉（Tree_ID 消失、樹徑cm 改名胸徑cm、圖片改回傳
+        # 樹木照片網址），而且新版 view 整個拿掉了緯度/經度兩欄。
+        # Tree_ID 跟座標改成直接從已經 JOIN 的 Trees t 取，不再依賴 view 提供。
         cursor.execute('''
             SELECT
                 v.紀錄編號     AS id,
-                v.Tree_ID      AS tree_id,
+                t.Tree_ID      AS tree_id,
                 v.樹木種類     AS species,
-                v.樹徑cm       AS dbh,
+                v.胸徑cm       AS dbh,
                 v.固碳量       AS carbon,
                 v.巡檢案場     AS site,
-                v.緯度         AS lat_raw,
-                v.經度         AS lng_raw,
-                v.樹木照片二進位 AS image_bin,
+                t.[LATITUDE N/S] AS lat_raw,
+                t.[LONGITUDE E/W] AS lng_raw,
+                v.樹木照片網址 AS image_url,
                 m.[DATE]       AS measure_date,
                 m.[TIME]       AS measure_time
             FROM v_AdminPendingQueue v
@@ -750,7 +793,7 @@ def get_all_trees_admin():
                 'site': row['site'],
                 'status': 'pending',
                 'recorded_at': recorded_at or None,
-                'img': _img_bin_to_data_uri(row['image_bin']),
+                'img': row['image_url'],
             })
         return trees
     except Exception as e:
@@ -773,7 +816,7 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT m.Tree_ID, m.dbh, m.image_data, m.track_id,
+            SELECT m.Tree_ID, m.dbh, m.image_data, m.image_url, m.track_id,
                    t.tracker_id, t.[LATITUDE N/S], t.[LONGITUDE E/W]
             FROM Measurements m
             LEFT JOIN Trees t ON t.Tree_ID = m.Tree_ID
@@ -782,7 +825,7 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
         row = cursor.fetchone()
         if row is None:
             return False, '查無此筆資料'
-        (current_tree_id, current_dbh, image_data, m_track_id,
+        (current_tree_id, current_dbh, image_data, image_url, m_track_id,
          t_tracker_id, lat_raw, lng_raw) = row
 
         if dbh is not None:
@@ -800,7 +843,10 @@ def admin_update_measurement(record_id: int, new_status: str, dbh=None, species=
             # 核准前檢查照片／樹徑／座標／Tree_ID 對應關係是否齊全，缺件就
             # 擋下、回傳原因，不寫入 status（已送出的 dbh／species 仍保留）
             missing = []
-            if not image_data:
+            # 2026/10/29修正：截圖改存 Blob 後新資料只有 image_url、image_data
+            # 會是 NULL，原本只檢查 image_data 會讓所有 Blob 上傳的照片被誤判
+            # 成「缺照片」，審核永遠過不了
+            if not image_data and not image_url:
                 missing.append('照片')
             if current_dbh is None or current_dbh <= 0:
                 missing.append('樹徑')

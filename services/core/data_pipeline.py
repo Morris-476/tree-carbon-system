@@ -12,6 +12,7 @@ import cv2
 
 from services.core import merge_data
 from services.core import db as db_service
+from services.blob_service import upload_tree_image
 from services.analysis.tracker import TreeTracker
 from services.analysis import tree_analysis
 from services.analysis.tree_coordinate import recalculate_tree_coordinates
@@ -34,6 +35,27 @@ def _extract_frame_jpeg(video_path: str, offset_ms: int):
         return buf.tobytes() if ok else None
     finally:
         cap.release()
+
+
+# 2026/10/29新增：截圖改直接轉存 Azure Blob Storage，不再把二進位塞進
+# Measurements.image_data——這張表先前已經因為每筆都存一張近 1MB 的截圖，
+# 把 Basic 層級 2GB 上限吃到快滿。回傳 (image_url, image_data)：
+# 上傳成功 image_url 有值、image_data 為 None；Blob 上傳失敗（例如網路問題）
+# 則退回存二進位到資料庫，確保這張截圖不會憑空消失。
+def _extract_and_upload_frame(video_path: str, offset_ms: int, site_name: str):
+    frame_bytes = _extract_frame_jpeg(video_path, offset_ms)
+    if not frame_bytes:
+        return None, None
+    try:
+        image_url = upload_tree_image(
+            file_stream=frame_bytes,
+            original_filename=f'{site_name}_{offset_ms}.jpg',
+            content_type='image/jpeg',
+        )
+        return image_url, None
+    except Exception as e:
+        print(f'截圖上傳 Blob Storage 失敗，改存資料庫二進位: {e}')
+        return None, frame_bytes
 
 
 def run_tracking_only(video_path: str) -> dict:
@@ -124,7 +146,9 @@ def run_upload_and_save(
                 frame_lookup.setdefault(det['frame'], []).append(det)
 
         for record in result['records']:
-            record['image_data'] = _extract_frame_jpeg(video_path, record['video_offset_ms'])
+            record['image_url'], record['image_data'] = _extract_and_upload_frame(
+                video_path, record['video_offset_ms'], site_name
+            )
 
             if fps:
                 frame_idx = round(record['video_offset_ms'] / 1000 * fps)
@@ -147,6 +171,7 @@ def run_upload_and_save(
     else:
         for record in result['records']:
             record['image_data'] = None
+            record['image_url'] = None
             record['track_id'] = None
             record['pixel_width'] = None
             record['mask_width'] = None
