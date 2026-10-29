@@ -10,6 +10,10 @@ ultralytics>=8.0
 python-dotenv>=1.0
 lap
 pandas>=1.5
+requests>=2.31
+
+# 照片改存 Azure Blob Storage（services/blob_service.py、scripts/migrate_images_to_blob.py）
+azure-storage-blob>=12.19
 
 # 樹種辨識（services/species_classifier.py）
 torch

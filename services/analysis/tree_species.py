@@ -12,11 +12,25 @@ if __name__ == '__main__':
 
 import cv2
 import numpy as np
+import requests
 from ultralytics import YOLO
 
 import config
 from services.core import db as db_service
 from services.core import species_classifier
+
+
+# 2026/10/29新增：截圖改存 Blob 後，image_data 可能是 None、要改從 image_url
+# 下載。舊資料仍有二進位的話優先直接用，省一次網路請求。
+def _load_image_bytes(row):
+    if row.get('image_data'):
+        return row['image_data']
+    image_url = row.get('image_url')
+    if not image_url:
+        return None
+    resp = requests.get(image_url, timeout=10)
+    resp.raise_for_status()
+    return resp.content
 
 
 def classify_pending_trees() -> dict:
@@ -29,7 +43,13 @@ def classify_pending_trees() -> dict:
 
     for row in trees:
         tree_id = row['Tree_ID']
-        image_array = np.frombuffer(row['image_data'], dtype=np.uint8)
+        try:
+            image_bytes = _load_image_bytes(row)
+        except Exception as e:
+            print(f'⚠ Tree_ID={tree_id} 截圖下載失敗，略過：{e}')
+            failed += 1
+            continue
+        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
         image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
 
         if image is None:
